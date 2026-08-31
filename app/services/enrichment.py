@@ -25,6 +25,20 @@ from app.config import PROJECT_ROOT
 
 EXCHANGE_PREFIXES = {"HOSE", "HNX", "UPCOM", "VNINDEX", "INDEX"}
 INDEX_TICKERS = {"VNINDEX"}
+_SYMBOL_COLUMN_CANDIDATES = ("symbol", "ticker", "Symbol", "Ticker", "code", "stock_symbol")
+_INDUSTRY_COLUMN_CANDIDATES = (
+    "industry_name",
+    "icb_name2",
+    "icb_name3",
+    "icb_name4",
+    "icb_name1",
+    "icb_name",
+    "industry",
+    "industryName",
+)
+# ICB level 2 is the most useful portfolio-level grouping (e.g. banking,
+# real estate).  Fall back predictably when a provider exposes a different level.
+_ICB_LEVEL_PREFERENCE = (2, 3, 1, 4)
 
 
 def normalize_ticker(raw_ticker: Any) -> tuple[str, str | None]:
@@ -894,6 +908,139 @@ def _records_from_dataframe_like(value: Any) -> list[dict[str, Any]]:
     else:
         return []
     return [_json_ready(row) for row in records]
+
+
+def fetch_industry_map() -> dict[str, str]:
+    """Best-effort ticker-to-industry map from vnstock's listing API."""
+    listing = _resolve_vnstock_listing()
+    if listing is None:
+        return {}
+    for method_name in ("symbols_by_industries", "industries_icb"):
+        method = getattr(listing, method_name, None)
+        if method is None:
+            continue
+        try:
+            mapping = _industry_map_from_records(_records_from_dataframe_like(method()))
+        except BaseException:
+            continue
+        if mapping:
+            return mapping
+    return {}
+
+
+def _resolve_vnstock_listing() -> Any:
+    try:
+        listing_module = import_module("vnstock.api.listing")
+        listing_class = getattr(listing_module, "Listing", None)
+        if listing_class is not None:
+            try:
+                return listing_class(source="VCI")
+            except BaseException:
+                return listing_class()
+    except BaseException:
+        pass
+    try:
+        module = import_module("vnstock")
+        listing_class = getattr(module, "Listing", None)
+        if listing_class is not None:
+            try:
+                return listing_class(source="VCI")
+            except BaseException:
+                return listing_class()
+        if hasattr(module, "Vnstock"):
+            return module.Vnstock().stock(symbol="ACB", source="VCI").listing
+    except BaseException:
+        pass
+    return None
+
+
+def _industry_map_from_records(records: list[dict[str, Any]]) -> dict[str, str]:
+    columns = {key for row in records[:100] if isinstance(row, dict) for key in row}
+    symbol_col = _first_present(columns, _SYMBOL_COLUMN_CANDIDATES)
+    industry_col = _first_present(columns, _INDUSTRY_COLUMN_CANDIDATES)
+    if not symbol_col or not industry_col:
+        return {}
+    level_col = "icb_level" if "icb_level" in columns else None
+    levels = {_coerce_level(row.get(level_col)) for row in records} if level_col else set()
+    target_level = next((level for level in _ICB_LEVEL_PREFERENCE if level in levels), None)
+    mapping: dict[str, str] = {}
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        if target_level is not None and _coerce_level(row.get(level_col)) != target_level:
+            continue
+        symbol = str(row.get(symbol_col) or "").strip().upper()
+        industry = str(row.get(industry_col) or "").strip()
+        if symbol and industry and len(symbol) <= 12:
+            mapping[symbol] = industry
+    return mapping
+
+
+def _first_present(columns: set[str], candidates: tuple[str, ...]) -> str | None:
+    return next((candidate for candidate in candidates if candidate in columns), None)
+
+
+def _coerce_level(value: Any) -> int | None:
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_dividend_events(ticker: str) -> list[dict[str, Any]]:
+    """Fetch announced ex-rights events for one ticker when vnstock supports it."""
+    symbol = str(ticker or "").strip().upper()
+    if not symbol:
+        return []
+    company = _resolve_vnstock_company(symbol)
+    if company is None or not callable(getattr(company, "events", None)):
+        return []
+    try:
+        records = _records_from_dataframe_like(company.events())
+    except BaseException:
+        return []
+    events: list[dict[str, Any]] = []
+    for row in records:
+        if str(row.get("category") or "").strip().upper() != "DIVIDEND":
+            continue
+        ex_date = _iso_date(row.get("exright_date"))
+        if not ex_date:
+            continue
+        title = str(row.get("event_title_vi") or row.get("event_name_vi") or "").strip()
+        folded = _ascii_fold(title)
+        cash = coerce_float(row.get("value_per_share"))
+        ratio = coerce_float(row.get("exercise_ratio"))
+        cash_amount = cash / 1000 if "tien mat" in folded and cash and cash > 0 else None
+        stock_ratio_pct = ratio * 100 if ("co phieu" in folded or "thuong" in folded) and ratio and 0 < ratio < 5 else None
+        event_id = str(row.get("id") or f"{ex_date}:{title}")
+        events.append({
+            "ticker": symbol,
+            "ex_date": ex_date,
+            "cash_amount": cash_amount,
+            "stock_ratio_pct": stock_ratio_pct,
+            "issue_ratio_pct": None,
+            "issue_price": None,
+            "note": f"VNStock: {title}" if title else "VNStock dividend",
+            "source": "vnstock",
+            "external_id": f"{symbol}:{event_id}",
+        })
+    return events
+
+
+def _resolve_vnstock_company(ticker: str) -> Any:
+    for module_name in ("vnstock", "vnstock.api.company"):
+        try:
+            company_class = getattr(import_module(module_name), "Company", None)
+        except BaseException:
+            continue
+        if company_class is None:
+            continue
+        for source in ("VCI", "KBS"):
+            try:
+                return company_class(symbol=ticker, source=source)
+            except BaseException:
+                continue
+    return None
 
 
 def _json_ready(row: dict[str, Any]) -> dict[str, Any]:

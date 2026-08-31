@@ -74,6 +74,7 @@ def portfolio_gate_state(signals: list[dict[str, Any]]) -> dict[str, Any]:
                 "sleeve": str(gate.get("sleeve") or "").upper(),
                 "sector": str(gate.get("sector") or "").lower(),
                 "allocation_pct": _number(gate.get("allocation_pct")) or 0,
+                "entry_time": signal.get("source_time") or signal.get("received_at"),
             }
         elif action == "confirm_buy" and key in positions:
             positions[key]["allocation_pct"] += _number(gate.get("allocation_pct")) or 0
@@ -108,6 +109,7 @@ def evaluate_portfolio_signal(
     backtest: dict[str, Any] | None,
     default_allocation_pct: float,
     base_strategy: str | None = None,
+    sector_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     guardrails = guardrails_from_backtest(backtest)
     state = portfolio_gate_state(signals)
@@ -150,7 +152,7 @@ def evaluate_portfolio_signal(
         position_strategy = current["strategy"]
     elif action == "buy":
         sleeve = classify_sleeve(payload)
-        sector = sector_for(ticker, exchange, payload)
+        sector = sector_for(ticker, exchange, payload, sector_map=sector_map)
         position_strategy = strategy
         if sleeve is None:
             return _rejected("unsupported_portfolio_strategy", state, guardrails)
@@ -196,10 +198,22 @@ def classify_sleeve(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def sector_for(ticker: str, exchange: str | None, payload: dict[str, Any]) -> str | None:
+def sector_for(
+    ticker: str,
+    exchange: str | None,
+    payload: dict[str, Any],
+    *,
+    sector_map: dict[str, str] | None = None,
+) -> str | None:
     explicit = str(payload.get("sector") or "").strip().lower()
     if explicit:
         return explicit
+    configured = sector_map or {}
+    mapped = configured.get(ticker.upper()) or configured.get(
+        f"{exchange}:{ticker}".upper() if exchange else ""
+    )
+    if mapped:
+        return str(mapped).strip().lower()
     symbol = f"{exchange}:{ticker}".upper() if exchange else ticker.upper()
     return SECTOR_MAP.get(symbol)
 

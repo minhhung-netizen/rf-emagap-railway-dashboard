@@ -629,6 +629,40 @@ class SignalStoreTest(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["note"], "FireAnt: Cổ tức cập nhật")
 
+    def test_sector_mapping_keeps_manual_classification_during_auto_refresh(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            store.upsert_sector_mapping(ticker="VPB", sector="Ngân hàng tùy chỉnh")
+
+            result = store.apply_auto_sector_mappings(
+                {"VPB": "Ngân hàng", "FPT": "Công nghệ"}
+            )
+
+            self.assertEqual(store.sector_map()["VPB"], "Ngân hàng tùy chỉnh")
+            self.assertEqual(store.sector_map()["FPT"], "Công nghệ")
+            self.assertGreaterEqual(result["updated"], 1)
+
+    def test_external_dividend_update_replaces_all_announced_terms(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            event = {
+                "ticker": "FPT",
+                "ex_date": "2026-06-20",
+                "cash_amount": 1,
+                "stock_ratio_pct": None,
+                "note": "VNStock: old",
+                "source": "vnstock",
+                "external_id": "FPT:event-1",
+            }
+            store.upsert_external_dividend_events([event])
+            event.update({"cash_amount": 2, "stock_ratio_pct": 15, "note": "VNStock: revised"})
+            store.upsert_external_dividend_events([event])
+
+            row = store.list_dividend_events("FPT")[0]
+            self.assertEqual(row["cash_amount"], 2)
+            self.assertEqual(row["stock_ratio_pct"], 15)
+            self.assertEqual(row["note"], "VNStock: revised")
+
 
 if __name__ == "__main__":
     unittest.main()

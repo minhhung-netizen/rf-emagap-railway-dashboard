@@ -36,6 +36,40 @@ def upcoming_dividend_events_for_positions(
     )
 
 
+def relevant_dividend_events_for_positions(
+    events: list[dict[str, Any]] | None,
+    positions: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Return events only for holdings opened strictly before their ex-date."""
+    eligible = []
+    for position in positions or []:
+        ticker = _normalize_ticker(position.get("ticker"))
+        entry_date = _parse_date(
+            position.get("entry_time") or position.get("entry_date") or position.get("created_at")
+        )
+        if ticker and entry_date is not None:
+            eligible.append((ticker, entry_date))
+    if not eligible:
+        return []
+
+    result: list[dict[str, Any]] = []
+    seen_ids: set[Any] = set()
+    for event in events or []:
+        ticker = _normalize_ticker(event.get("ticker"))
+        ex_date = _parse_date(event.get("ex_date"))
+        if not ticker or ex_date is None:
+            continue
+        if not any(position_ticker == ticker and entry_date < ex_date for position_ticker, entry_date in eligible):
+            continue
+        event_id = event.get("id")
+        if event_id is not None:
+            if event_id in seen_ids:
+                continue
+            seen_ids.add(event_id)
+        result.append(dict(event))
+    return sorted(result, key=lambda event: (str(event.get("ex_date") or ""), str(event.get("ticker") or "")))
+
+
 def dividend_adjustment(
     *,
     ticker: str,
@@ -71,7 +105,9 @@ def dividend_adjustment(
         ex_date = _parse_date(event.get("ex_date"))
         if ex_date is None:
             continue
-        if entry_date is not None and ex_date < entry_date:
+        # Buying on the ex-rights date itself is already ex-price and does not
+        # entitle the position to that corporate action.
+        if entry_date is not None and ex_date <= entry_date:
             continue
 
         cash_amount = _safe_float(event.get("cash_amount")) or 0.0

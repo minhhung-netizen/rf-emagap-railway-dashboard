@@ -143,6 +143,16 @@ CREATE TABLE IF NOT EXISTS dividend_events (
 CREATE INDEX IF NOT EXISTS idx_dividend_events_ticker_date
 ON dividend_events (ticker, ex_date ASC);
 
+CREATE TABLE IF NOT EXISTS sector_mappings (
+    ticker TEXT PRIMARY KEY,
+    sector TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'auto',
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sector_mappings_sector
+ON sector_mappings (sector);
+
 CREATE TABLE IF NOT EXISTS strategy_backtest_stats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker TEXT NOT NULL,
@@ -264,6 +274,22 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_SECTOR_SEED_PATH = Path(__file__).resolve().parent / "data" / "vn_sectors.json"
+
+
+def default_sector_map() -> dict[str, str]:
+    """Load the checked-in alert-universe sector map for a first-run seed."""
+    try:
+        raw = json.loads(_SECTOR_SEED_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {
+        str(symbol).split(":")[-1].strip().upper(): str(sector).strip()
+        for symbol, sector in raw.items()
+        if str(symbol).strip() and str(sector).strip()
+    }
+
+
 class SignalStore:
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
@@ -288,6 +314,8 @@ class SignalStore:
             self._ensure_dividend_event_columns(conn)
             self._ensure_strategy_backtest_stat_columns(conn)
             self._ensure_user_columns(conn)
+            self._ensure_sector_mapping_columns(conn)
+            self._seed_sector_mappings(conn)
             conn.execute(
                 """
                 UPDATE signals
@@ -355,6 +383,26 @@ class SignalStore:
         }
         if "strategies_json" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN strategies_json TEXT NOT NULL DEFAULT '[]'")
+
+    def _ensure_sector_mapping_columns(self, conn: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(sector_mappings)").fetchall()
+        }
+        if "source" not in columns:
+            conn.execute(
+                "ALTER TABLE sector_mappings ADD COLUMN source TEXT NOT NULL DEFAULT 'auto'"
+            )
+
+    def _seed_sector_mappings(self, conn: sqlite3.Connection) -> None:
+        existing = conn.execute("SELECT COUNT(*) AS total FROM sector_mappings").fetchone()
+        if existing and existing["total"]:
+            return
+        now = utc_now_iso()
+        conn.executemany(
+            "INSERT OR IGNORE INTO sector_mappings (ticker, sector, source, updated_at) VALUES (?, ?, 'seed', ?)",
+            [(ticker, sector, now) for ticker, sector in default_sector_map().items()],
+        )
 
     def _normalize_signal_actions(self, conn: sqlite3.Connection) -> None:
         action_expr = """
@@ -1522,12 +1570,32 @@ class SignalStore:
                     conn.execute(
                         """
                         UPDATE dividend_events
-                        SET ticker = ?, ex_date = ?, note = ?, updated_at = ?
+                        SET ticker = ?, ex_date = ?, cash_amount = ?, stock_ratio_pct = ?,
+                            issue_ratio_pct = ?, issue_price = ?, note = ?, updated_at = ?
                         WHERE id = ?
                         """,
-                        (ticker, ex_date, event.get("note"), now, existing["id"]),
+                        (
+                            ticker,
+                            ex_date,
+                            event.get("cash_amount"),
+                            event.get("stock_ratio_pct"),
+                            event.get("issue_ratio_pct"),
+                            event.get("issue_price"),
+                            event.get("note"),
+                            now,
+                            existing["id"],
+                        ),
                     )
                     updated += 1
+                    continue
+                duplicate = conn.execute(
+                    """
+                    SELECT id FROM dividend_events
+                    WHERE ticker = ? AND ex_date = ?
+                    """,
+                    (ticker, ex_date),
+                ).fetchone()
+                if duplicate:
                     continue
                 conn.execute(
                     """
@@ -1595,6 +1663,94 @@ class SignalStore:
                 (ticker.strip().upper(),),
             )
             return cursor.rowcount
+
+    def delete_dividend_events_except_ids(self, keep_ids: set[int] | list[int]) -> int:
+        normalized_ids = sorted({int(event_id) for event_id in keep_ids})
+        with self.connect() as conn:
+            if not normalized_ids:
+                cursor = conn.execute("DELETE FROM dividend_events")
+                return cursor.rowcount
+            placeholders = ", ".join("?" for _ in normalized_ids)
+            cursor = conn.execute(
+                f"DELETE FROM dividend_events WHERE id NOT IN ({placeholders})",
+                normalized_ids,
+            )
+            return cursor.rowcount
+
+    def list_sector_mappings(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT ticker, sector, source, updated_at FROM sector_mappings ORDER BY sector ASC, ticker ASC"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def sector_map(self) -> dict[str, str]:
+        return {row["ticker"]: row["sector"] for row in self.list_sector_mappings()}
+
+    def upsert_sector_mapping(self, *, ticker: str, sector: str) -> dict[str, Any]:
+        normalized_ticker = ticker.strip().upper()
+        normalized_sector = sector.strip()
+        if not normalized_ticker or not normalized_sector:
+            raise ValueError("ticker and sector are required")
+        now = utc_now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sector_mappings (ticker, sector, source, updated_at)
+                VALUES (?, ?, 'manual', ?)
+                ON CONFLICT(ticker) DO UPDATE SET
+                    sector = excluded.sector,
+                    source = 'manual',
+                    updated_at = excluded.updated_at
+                """,
+                (normalized_ticker, normalized_sector, now),
+            )
+            row = conn.execute(
+                "SELECT ticker, sector, source, updated_at FROM sector_mappings WHERE ticker = ?",
+                (normalized_ticker,),
+            ).fetchone()
+        return dict(row)
+
+    def delete_sector_mapping(self, ticker: str) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM sector_mappings WHERE ticker = ?",
+                (ticker.strip().upper(),),
+            )
+            return cursor.rowcount > 0
+
+    def apply_auto_sector_mappings(self, mapping: dict[str, str]) -> dict[str, int]:
+        rows = [
+            (str(ticker or "").strip().upper(), str(sector or "").strip())
+            for ticker, sector in (mapping or {}).items()
+            if str(ticker or "").strip() and str(sector or "").strip()
+        ]
+        if not rows:
+            return {"added": 0, "updated": 0}
+        now = utc_now_iso()
+        with self.connect() as conn:
+            manual = {
+                row["ticker"]
+                for row in conn.execute(
+                    "SELECT ticker FROM sector_mappings WHERE source = 'manual'"
+                ).fetchall()
+            }
+            before = conn.execute("SELECT COUNT(*) AS total FROM sector_mappings").fetchone()["total"]
+            to_apply = [(ticker, sector, now) for ticker, sector in rows if ticker not in manual]
+            conn.executemany(
+                """
+                INSERT INTO sector_mappings (ticker, sector, source, updated_at)
+                VALUES (?, ?, 'auto', ?)
+                ON CONFLICT(ticker) DO UPDATE SET
+                    sector = excluded.sector,
+                    source = 'auto',
+                    updated_at = excluded.updated_at
+                """,
+                to_apply,
+            )
+            after = conn.execute("SELECT COUNT(*) AS total FROM sector_mappings").fetchone()["total"]
+        added = after - before
+        return {"added": added, "updated": len(to_apply) - added}
 
     def _insert_manual_snapshot(
         self,

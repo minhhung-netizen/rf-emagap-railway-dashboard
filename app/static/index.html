@@ -260,6 +260,7 @@
                 <tr>
                   <th data-i18n="ticker">Ticker</th>
                   <th data-i18n="strategy">Strategy</th>
+                  <th>Ngành</th>
                   <th data-i18n="timeframe">Timeframe</th>
                   <th data-i18n="entryPrice">Entry</th>
                   <th data-i18n="currentPrice">Current Price</th>
@@ -1102,6 +1103,10 @@
               <h2 data-i18n="dividendRules">Ex-rights Adjustments</h2>
               <p class="panelNote">Chỉ cảnh báo các mã đang có vị thế được Portfolio Gate chấp thuận.</p>
             </div>
+            <div class="panelActions adminOnly">
+              <span id="dividendRefreshStatus" class="mutedText"></span>
+              <button id="refreshDividendsButton" class="smallButton" type="button">Cập nhật cổ tức</button>
+            </div>
           </div>
           <form id="dividendEventForm" class="manualForm dividendForm" autocomplete="off">
             <input id="dividendTicker" name="dividend-ticker-symbol" required autocomplete="off" autocapitalize="characters" spellcheck="false" data-lpignore="true" data-1p-ignore aria-label="Dividend ticker" placeholder="Ticker" />
@@ -1209,6 +1214,32 @@
                 </tr>
               </thead>
               <tbody id="usersTable"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="adminPanel">
+          <div class="panelHead">
+            <div>
+              <p class="eyebrow">Quản trị danh mục</p>
+              <h2>Phân loại ngành</h2>
+              <p class="panelNote">Ngành được dùng trực tiếp khi Portfolio Gate kiểm tra trần theo ngành. Chỉnh tay luôn được ưu tiên hơn dữ liệu tự động.</p>
+            </div>
+            <div class="panelActions">
+              <span id="sectorRefreshStatus" class="mutedText"></span>
+              <button id="refreshSectorsButton" class="smallButton" type="button">Tự điền từ VNStock</button>
+            </div>
+          </div>
+          <form id="sectorForm" class="userCreateForm" autocomplete="off">
+            <input id="sectorTicker" required autocapitalize="characters" spellcheck="false" placeholder="Mã, ví dụ VPB" />
+            <input id="sectorName" required list="sectorNameOptions" placeholder="Ngành" />
+            <datalist id="sectorNameOptions"></datalist>
+            <button type="submit">Lưu phân loại</button>
+            <input id="sectorSearch" type="search" placeholder="Lọc mã hoặc ngành" />
+          </form>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Mã</th><th>Ngành</th><th>Nguồn</th><th>Cập nhật</th><th></th></tr></thead>
+              <tbody id="sectorTable"></tbody>
             </table>
           </div>
         </section>

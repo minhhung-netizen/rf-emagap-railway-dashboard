@@ -190,6 +190,8 @@ const els = {
   dividendIssuePrice: document.querySelector("#dividendIssuePrice"),
   dividendNote: document.querySelector("#dividendNote"),
   dividendEventsTable: document.querySelector("#dividendEventsTable"),
+  refreshDividendsButton: document.querySelector("#refreshDividendsButton"),
+  dividendRefreshStatus: document.querySelector("#dividendRefreshStatus"),
   exDateAlerts: document.querySelector("#exDateAlerts"),
   derivativeOpenCount: document.querySelector("#derivativeOpenCount"),
   derivativeOpenPnl: document.querySelector("#derivativeOpenPnl"),
@@ -224,6 +226,14 @@ const els = {
   newUserFeatures: document.querySelector("#newUserFeatures"),
   newUserStrategies: document.querySelector("#newUserStrategies"),
   usersTable: document.querySelector("#usersTable"),
+  sectorForm: document.querySelector("#sectorForm"),
+  sectorTicker: document.querySelector("#sectorTicker"),
+  sectorName: document.querySelector("#sectorName"),
+  sectorNameOptions: document.querySelector("#sectorNameOptions"),
+  sectorSearch: document.querySelector("#sectorSearch"),
+  sectorTable: document.querySelector("#sectorTable"),
+  refreshSectorsButton: document.querySelector("#refreshSectorsButton"),
+  sectorRefreshStatus: document.querySelector("#sectorRefreshStatus"),
 };
 
 const FALLBACK_SIGNAL_WEIGHT_PCT = 5;
@@ -1362,6 +1372,8 @@ const state = {
   manualPortfolio: { positions: [], equity_curve: [], summary: {} },
   dividendEvents: [],
   dividendAlerts: [],
+  sectors: [],
+  sectorNames: [],
   summary: {},
   lastRefreshAt: null,
   derivatives: { summary: {}, open_positions: [], closed_trades: [], events: [] },
@@ -3120,6 +3132,7 @@ async function refresh() {
       dividend_events: [],
       dividend_alerts: [],
     }),
+    featureFetch("positions", "/api/sectors", { sectors: [], sector_names: [] }),
   ]);
 
   const settingsPayload = settledPayload(
@@ -3164,6 +3177,7 @@ async function refresh() {
     { dividend_events: [], dividend_alerts: [] },
     "dividend events"
   );
+  const sectorPayload = settledPayload(results[9], { sectors: [], sector_names: [] }, "sectors");
 
   state.defaultSignalWeightPct = Number(settingsPayload.default_signal_weight_pct) || FALLBACK_SIGNAL_WEIGHT_PCT;
   state.summary = summary;
@@ -3200,7 +3214,10 @@ async function refresh() {
   renderPortfolioGate(state.portfolioGate);
   state.dividendEvents = dividendPayload.dividend_events || [];
   state.dividendAlerts = dividendPayload.dividend_alerts || [];
+  state.sectors = sectorPayload.sectors || [];
+  state.sectorNames = sectorPayload.sector_names || [];
   renderDividendEvents();
+  renderSectorMappings();
   renderExDateAlerts();
   renderSummary(summary);
   renderUserAttention();
@@ -4670,7 +4687,7 @@ function renderOpenPositions() {
   const openTrades = sortOpenPositions(filterOpenPositions(state.openTrades));
   renderOpenPositionsTotalReturn(openTrades);
   if (!openTrades.length) {
-    els.openPositionsTable.innerHTML = `<tr><td class="empty" colspan="13">${t("noOpenPositions")}</td></tr>`;
+    els.openPositionsTable.innerHTML = `<tr><td class="empty" colspan="14">${t("noOpenPositions")}</td></tr>`;
     els.openPositionCards.innerHTML = `<div class="empty">${t("noOpenPositions")}</div>`;
     return;
   }
@@ -4687,6 +4704,7 @@ function renderOpenPositions() {
       <tr data-position-key="${escapeHtml(positionKey)}">
         <td><strong class="${tickerClass}" title="${escapeHtml(confirmTitle)}">${escapeHtml(trade.ticker)}</strong></td>
         <td><strong>${escapeHtml(displayStrategyName(trade.strategy))}</strong></td>
+        <td>${escapeHtml(sectorForTicker(trade.ticker) || "-")}</td>
         <td>${escapeHtml(trade.timeframe || "-")}</td>
         <td>${formatPrice(trade.entry_price)}</td>
         <td>${formatPrice(trade.exit_price)}</td>
@@ -4910,6 +4928,16 @@ function renderBacktestInsight(stat) {
     insightMetric(t("tp2HitRate"), formatHitRate(stat.tp2_hits, stat.tp2_total ?? stat.closed_trades)),
     insightMetric(t("tp3HitRate"), formatHitRate(stat.tp3_hits, stat.tp3_total ?? stat.closed_trades)),
   ]);
+}
+
+function sectorForTicker(ticker) {
+  const normalized = String(ticker || "").trim().toUpperCase();
+  const mapping = state.sectors.find((row) => String(row.ticker || "").toUpperCase() === normalized);
+  if (mapping?.sector) return mapping.sector;
+  const position = (state.portfolioGate?.state?.positions || []).find(
+    (row) => String(row.ticker || "").toUpperCase() === normalized
+  );
+  return position?.sector || "";
 }
 
 function positionSignals(trade) {
@@ -5582,6 +5610,96 @@ async function reopenClosedTrade(exitSignalId) {
   await refresh();
 }
 
+async function refreshDividendsFromProviders() {
+  if (!els.refreshDividendsButton) return;
+  els.refreshDividendsButton.disabled = true;
+  els.dividendRefreshStatus.textContent = "Đang cập nhật…";
+  try {
+    const response = await fetch("/api/dividend-events/refresh", { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || "Không thể cập nhật cổ tức");
+    els.dividendRefreshStatus.textContent = `Đã quét ${result.tickers || 0} mã, lưu ${result.upserted || 0} sự kiện`;
+    await refresh();
+  } catch (error) {
+    els.dividendRefreshStatus.textContent = error.message || "Cập nhật thất bại";
+  } finally {
+    els.refreshDividendsButton.disabled = false;
+  }
+}
+
+function renderSectorMappings() {
+  if (!els.sectorTable) return;
+  const query = (els.sectorSearch?.value || "").trim().toLowerCase();
+  const rows = [...state.sectors]
+    .filter((row) => !query || `${row.ticker} ${row.sector}`.toLowerCase().includes(query))
+    .sort((left, right) => `${left.sector}:${left.ticker}`.localeCompare(`${right.sector}:${right.ticker}`));
+  if (els.sectorNameOptions) {
+    els.sectorNameOptions.innerHTML = [...new Set(state.sectorNames)]
+      .sort()
+      .map((sector) => `<option value="${escapeHtml(sector)}"></option>`)
+      .join("");
+  }
+  if (!rows.length) {
+    els.sectorTable.innerHTML = '<tr><td class="empty" colspan="5">Chưa có phân loại ngành</td></tr>';
+    return;
+  }
+  els.sectorTable.innerHTML = rows.map((row) => `
+    <tr>
+      <td><strong>${escapeHtml(row.ticker)}</strong></td>
+      <td>${escapeHtml(row.sector)}</td>
+      <td>${escapeHtml(row.source === "manual" ? "Chỉnh tay" : row.source === "seed" ? "Danh mục sẵn có" : "Tự động")}</td>
+      <td>${formatDate(row.updated_at)}</td>
+      <td><button class="deleteButton" type="button" data-sector-delete="${escapeHtml(row.ticker)}">${escapeHtml(t("delete"))}</button></td>
+    </tr>
+  `).join("");
+  els.sectorTable.querySelectorAll("[data-sector-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteSectorMapping(button.dataset.sectorDelete));
+  });
+}
+
+async function saveSectorMapping(event) {
+  event.preventDefault();
+  const response = await fetch("/api/sectors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticker: els.sectorTicker.value.trim().toUpperCase(), sector: els.sectorName.value.trim() }),
+  });
+  if (!response.ok) {
+    const result = await response.json();
+    window.alert(result.detail || "Không thể lưu phân loại ngành");
+    return;
+  }
+  els.sectorForm.reset();
+  await refresh();
+}
+
+async function deleteSectorMapping(ticker) {
+  if (!window.confirm(`Xóa phân loại ngành của ${ticker}?`)) return;
+  const response = await fetch(`/api/sectors/${encodeURIComponent(ticker)}`, { method: "DELETE" });
+  if (!response.ok) {
+    window.alert("Không thể xóa phân loại ngành");
+    return;
+  }
+  await refresh();
+}
+
+async function refreshSectorsFromProvider() {
+  if (!els.refreshSectorsButton) return;
+  els.refreshSectorsButton.disabled = true;
+  els.sectorRefreshStatus.textContent = "Đang lấy dữ liệu…";
+  try {
+    const response = await fetch("/api/sectors/refresh", { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || "Không thể tự điền ngành");
+    els.sectorRefreshStatus.textContent = `Nguồn ${result.fetched || 0} mã · thêm ${result.added || 0} · cập nhật ${result.updated || 0}`;
+    await refresh();
+  } catch (error) {
+    els.sectorRefreshStatus.textContent = error.message || "Cập nhật thất bại";
+  } finally {
+    els.refreshSectorsButton.disabled = false;
+  }
+}
+
 async function loadChartPayload(ticker) {
   const payload = await fetchJson(`/api/chart/${encodeURIComponent(ticker)}`);
   const history = normalizeHistory(payload.history || []);
@@ -6232,6 +6350,10 @@ els.manualPositionForm.addEventListener("submit", addManualPosition);
 els.manualRefreshPrices.addEventListener("click", refreshManualMarketPrices);
 els.manualRecordDailyPerformance.addEventListener("click", recordManualDailyPerformance);
 els.dividendEventForm.addEventListener("submit", addDividendEvent);
+els.refreshDividendsButton?.addEventListener("click", refreshDividendsFromProviders);
+els.sectorForm?.addEventListener("submit", saveSectorMapping);
+els.sectorSearch?.addEventListener("input", renderSectorMappings);
+els.refreshSectorsButton?.addEventListener("click", refreshSectorsFromProvider);
 els.derivativeCapitalForm.addEventListener("submit", saveDerivativeCapital);
 window.addEventListener("resize", () => {
   resizePriceChart();

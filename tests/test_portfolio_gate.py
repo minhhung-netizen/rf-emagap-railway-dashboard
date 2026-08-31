@@ -192,6 +192,21 @@ class PortfolioGateTest(unittest.TestCase):
         self.assertEqual(accepted["classification"]["sleeve"], "EMA")
         self.assertEqual(accepted["classification"]["sector"], "technology")
 
+    def test_configured_sector_map_overrides_the_bundled_map(self):
+        accepted = evaluate_portfolio_signal(
+            payload={"strategy": "RF Stock MTF"},
+            ticker="VPB",
+            exchange="HOSE",
+            action="buy",
+            signals=[],
+            backtest=None,
+            default_allocation_pct=5,
+            sector_map={"VPB": "Tài chính tùy chỉnh"},
+        )
+
+        self.assertTrue(accepted["allowed"])
+        self.assertEqual(accepted["classification"]["sector"], "tài chính tùy chỉnh")
+
     def test_webhook_saves_the_gate_classification_and_rejects_excess_top_up(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SignalStore(Path(temp_dir) / "signals.db")

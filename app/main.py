@@ -24,6 +24,8 @@ from app.services.enrichment import (
     MarketDataEnricher,
     VnstockEnricher,
     coerce_float,
+    fetch_dividend_events,
+    fetch_industry_map,
     normalize_stock_price,
     normalize_action,
     normalize_ticker,
@@ -32,7 +34,10 @@ from app.services.derivatives import (
     build_derivative_performance,
     normalize_derivative_action,
 )
-from app.services.dividends import upcoming_dividend_events_for_positions
+from app.services.dividends import (
+    relevant_dividend_events_for_positions,
+    upcoming_dividend_events_for_positions,
+)
 from app.services.market_hours import is_market_open
 from app.services.manual_portfolio import (
     build_daily_performance_record,
@@ -134,6 +139,8 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(signal_enrichment_worker()),
         asyncio.create_task(price_refresh_loop()),
+        asyncio.create_task(sector_autofill_loop()),
+        asyncio.create_task(dividend_autofetch_loop()),
     ]
     try:
         yield
@@ -156,7 +163,7 @@ app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "app" / "static"), nam
 
 FEATURE_PATHS = {
     "overview": ("/api/summary", "/api/signals", "/api/chart/"),
-    "positions": ("/api/performance",),
+    "positions": ("/api/performance", "/api/sectors"),
     "performance": ("/api/performance",),
     "portfolioMonitor": ("/api/portfolio-backtests", "/api/portfolio-gate"),
     "dividends": ("/api/dividend-events",),
@@ -290,6 +297,11 @@ class DividendEventPayload(BaseModel):
     issue_ratio_pct: float | None = Field(default=None, ge=0, examples=[20])
     issue_price: float | None = Field(default=None, ge=0, examples=[10000])
     note: str | None = None
+
+
+class SectorMappingPayload(BaseModel):
+    ticker: str = Field(..., min_length=1, max_length=20, examples=["VPB"])
+    sector: str = Field(..., min_length=1, max_length=120, examples=["Ngân hàng"])
 
 
 class DerivativeCapitalPayload(BaseModel):
@@ -625,6 +637,7 @@ async def receive_webhook(
         backtest=store.latest_portfolio_backtest(),
         default_allocation_pct=settings.default_signal_weight_pct,
         base_strategy=required_open_strategy,
+        sector_map=store.sector_map(),
     )
     if not gate["allowed"]:
         invalid_signal = store.record_invalid_signal(
@@ -1273,10 +1286,16 @@ def manual_portfolio() -> dict[str, Any]:
 @app.get("/api/dividend-events")
 def dividend_events(ticker: str | None = None) -> dict[str, Any]:
     normalized_ticker = normalize_ticker(ticker)[0] if ticker else None
-    events = store.list_dividend_events(normalized_ticker)
-    open_tickers = open_position_tickers()
+    all_events = store.list_dividend_events(normalized_ticker)
+    positions = open_stock_positions_for_dividends()
     if normalized_ticker:
-        open_tickers &= {normalized_ticker}
+        positions = [
+            position
+            for position in positions
+            if str(position.get("ticker") or "").upper() == normalized_ticker
+        ]
+    events = relevant_dividend_events_for_positions(all_events, positions)
+    open_tickers = {str(event.get("ticker") or "").upper() for event in events}
     alerts = upcoming_dividend_events_for_positions(events, open_tickers)
     alerts_by_id = {
         alert["id"]: alert
@@ -1290,6 +1309,21 @@ def dividend_events(ticker: str | None = None) -> dict[str, Any]:
         ],
         "dividend_alerts": alerts,
     }
+
+
+@app.post("/api/dividend-events/prune")
+def prune_dividend_events() -> dict[str, Any]:
+    relevant_events = relevant_dividend_events_for_positions(
+        store.list_dividend_events(), open_stock_positions_for_dividends()
+    )
+    keep_ids = {int(event["id"]) for event in relevant_events if event.get("id") is not None}
+    removed = store.delete_dividend_events_except_ids(keep_ids)
+    return {"status": "pruned", "removed": removed, "kept": len(keep_ids)}
+
+
+@app.post("/api/dividend-events/refresh")
+async def refresh_dividend_events() -> dict[str, Any]:
+    return {"status": "ok", **(await refresh_dividend_events_for_open_positions())}
 
 
 @app.post("/api/dividend-events")
@@ -1334,6 +1368,35 @@ def create_dividend_event(payload: DividendEventPayload) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"status": "created", "dividend_event": event}
+
+
+@app.get("/api/sectors")
+def sector_mappings() -> dict[str, Any]:
+    mappings = store.list_sector_mappings()
+    return {"sectors": mappings, "sector_names": sorted({row["sector"] for row in mappings})}
+
+
+@app.post("/api/sectors")
+def upsert_sector_mapping(payload: SectorMappingPayload) -> dict[str, Any]:
+    ticker = normalize_ticker(payload.ticker)[0]
+    try:
+        mapping = store.upsert_sector_mapping(ticker=ticker, sector=payload.sector)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"status": "saved", "sector": mapping}
+
+
+@app.post("/api/sectors/refresh")
+async def refresh_sectors() -> dict[str, Any]:
+    return {"status": "ok", **(await asyncio.to_thread(populate_sectors_from_listing))}
+
+
+@app.delete("/api/sectors/{ticker}")
+def delete_sector_mapping(ticker: str) -> dict[str, Any]:
+    normalized = normalize_ticker(ticker)[0]
+    if not store.delete_sector_mapping(normalized):
+        raise HTTPException(status_code=404, detail="Sector mapping not found")
+    return {"status": "deleted", "ticker": normalized}
 
 
 @app.delete("/api/dividend-events/{event_id}")
@@ -1513,6 +1576,77 @@ async def price_refresh_loop() -> None:
         await asyncio.sleep(interval_seconds)
 
 
+def populate_sectors_from_listing() -> dict[str, Any]:
+    """Refresh provider classifications without overwriting administrator choices."""
+    mapping = fetch_industry_map()
+    result = store.apply_auto_sector_mappings(mapping) if mapping else {"added": 0, "updated": 0}
+    store.set_app_setting("sectors_refreshed_at", utc_now_iso())
+    store.set_app_setting("sectors_source_count", str(len(mapping)))
+    logger.info("Sector refresh: %s source symbols, %s", len(mapping), result)
+    return {"fetched": len(mapping), **result}
+
+
+async def sector_autofill_loop() -> None:
+    await asyncio.sleep(5)
+    while True:
+        try:
+            await asyncio.to_thread(populate_sectors_from_listing)
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            logger.exception("Scheduled sector auto-fill failed")
+        await asyncio.sleep(24 * 3600)
+
+
+async def refresh_dividend_events_for_open_positions() -> dict[str, Any]:
+    positions = open_stock_positions_for_dividends()
+    tickers = sorted({str(position.get("ticker") or "").upper() for position in positions if position.get("ticker")})
+    collected: list[dict[str, Any]] = []
+    for ticker in tickers:
+        collected.extend(
+            relevant_dividend_events_for_positions(
+                await collect_dividend_events_for_ticker(ticker), positions
+            )
+        )
+        await asyncio.sleep(1)
+    upserted = store.upsert_external_dividend_events(collected) if collected else 0
+    store.set_app_setting("dividends_refreshed_at", utc_now_iso())
+    logger.info("Dividend refresh: %s tickers, %s events, %s upserted", len(tickers), len(collected), upserted)
+    return {"tickers": len(tickers), "events": len(collected), "upserted": upserted}
+
+
+async def collect_dividend_events_for_ticker(ticker: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    try:
+        events.extend(await asyncio.to_thread(fetch_dividend_events, ticker))
+    except asyncio.CancelledError:
+        raise
+    except BaseException:
+        logger.exception("VNStock dividend fetch failed for %s", ticker)
+    try:
+        enrichment = await asyncio.to_thread(enricher.enrich, ticker)
+    except asyncio.CancelledError:
+        raise
+    except BaseException:
+        logger.exception("Market-data dividend fetch failed for %s", ticker)
+    else:
+        if isinstance(enrichment.get("dividend_events"), list):
+            events.extend(enrichment["dividend_events"])
+    return events
+
+
+async def dividend_autofetch_loop() -> None:
+    await asyncio.sleep(8)
+    while True:
+        try:
+            await refresh_dividend_events_for_open_positions()
+        except asyncio.CancelledError:
+            raise
+        except BaseException:
+            logger.exception("Scheduled dividend update failed")
+        await asyncio.sleep(12 * 3600)
+
+
 async def manual_portfolio_automation_loop() -> None:
     while True:
         try:
@@ -1527,7 +1661,7 @@ async def manual_portfolio_automation_loop() -> None:
 
 async def refresh_open_position_prices(*, include_manual: bool = True) -> int:
     performance_data = build_performance(
-        store.list_all_signals(),
+        filtered_performance_signals(),
         store.list_dividend_events(),
     )
     open_trades = performance_data["open_trades"]
@@ -1610,10 +1744,23 @@ def sync_enrichment_dividends(enrichment: dict[str, Any]) -> int:
     events = enrichment.get("dividend_events") or []
     if not isinstance(events, list) or not events:
         return 0
-    upcoming_events = upcoming_dividend_events_for_positions(events, open_position_tickers())
-    if not upcoming_events:
+    relevant_events = relevant_dividend_events_for_positions(
+        events, open_stock_positions_for_dividends()
+    )
+    if not relevant_events:
         return 0
-    return store.upsert_external_dividend_events(upcoming_events)
+    return store.upsert_external_dividend_events(relevant_events)
+
+
+def open_stock_positions_for_dividends() -> list[dict[str, Any]]:
+    return [
+        {
+            "ticker": position.get("ticker"),
+            "entry_time": position.get("entry_time"),
+        }
+        for position in portfolio_gate_state(store.list_all_signals())["positions"]
+        if position.get("ticker") and position.get("entry_time")
+    ]
 
 
 def open_position_tickers() -> set[str]:
