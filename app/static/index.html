@@ -59,7 +59,9 @@
       <nav class="tabs" aria-label="Dashboard sections">
         <button class="tabButton active" type="button" data-tab-target="overview" data-i18n="tabOverview">Overview</button>
         <button class="tabButton" type="button" data-tab-target="positions" data-i18n="tabPositions">Positions</button>
+        <button class="tabButton" type="button" data-tab-target="performance" data-i18n="tabPerformance">Performance</button>
         <button class="tabButton" type="button" data-tab-target="portfolioMonitor">RF + EMA Monitor</button>
+        <button class="tabButton" type="button" data-tab-target="dividends" data-i18n="tabDividends">Dividends</button>
         <button class="tabButton" type="button" data-tab-target="logs" data-i18n="tabLogs">Logs</button>
         <button class="tabButton" type="button" data-tab-target="admin">Quản trị</button>
       </nav>
@@ -575,7 +577,7 @@
           <div class="equityPanel">
             <div class="panelHead">
               <div>
-                <p class="eyebrow" data-i18n="equityCurve">Equity Curve</p>
+                <p class="eyebrow">Gate-approved performance</p>
                 <h2 data-i18n="closedTradeGrowth">Closed Trade Growth</h2>
               </div>
             </div>
@@ -625,7 +627,7 @@
         </div>
       </section>
 
-        <section class="backtestStatsPanel">
+        <section class="backtestStatsPanel" hidden>
           <div class="panelHead">
             <div>
               <p class="eyebrow" data-i18n="backtestStats">Backtest Stats</p>
@@ -1098,6 +1100,7 @@
             <div>
               <p class="eyebrow" data-i18n="dividendCalendar">Dividend Calendar</p>
               <h2 data-i18n="dividendRules">Ex-rights Adjustments</h2>
+              <p class="panelNote">Chỉ cảnh báo các mã đang có vị thế được Portfolio Gate chấp thuận.</p>
             </div>
           </div>
           <form id="dividendEventForm" class="manualForm dividendForm" autocomplete="off">

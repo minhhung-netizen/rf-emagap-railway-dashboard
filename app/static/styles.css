@@ -1338,6 +1338,13 @@ main {
   margin: 16px;
 }
 
+.panelNote {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
 .portfolioMonitorGrid article {
   background: var(--panel-raised);
   border: 1px solid var(--line-soft);

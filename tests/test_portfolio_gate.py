@@ -248,6 +248,48 @@ class PortfolioGateTest(unittest.TestCase):
             self.assertEqual(rejected["status"], "rejected")
             self.assertEqual(rejected["reason"], "ticker_cap")
 
+    def test_performance_source_excludes_legacy_signals(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            legacy = store.insert_signal(
+                ticker="FPT",
+                exchange="HOSE",
+                action="buy",
+                price=100,
+                timeframe="D",
+                strategy="Legacy DCA",
+                note=None,
+                source_time=None,
+                payload={},
+                enrichment={},
+            )
+            gated = store.insert_signal(
+                ticker="VPB",
+                exchange="HOSE",
+                action="buy",
+                price=20,
+                timeframe="D",
+                strategy="RF Stock MTF",
+                note=None,
+                source_time=None,
+                payload={
+                    "portfolio_gate": {
+                        "version": 1,
+                        "sleeve": "RF",
+                        "sector": "banking",
+                        "allocation_pct": 5,
+                        "position_strategy": "RF Stock MTF",
+                    }
+                },
+                enrichment={},
+            )
+
+            with patch.object(dashboard_main, "store", store):
+                source = dashboard_main.filtered_performance_signals()
+
+            self.assertEqual([signal["id"] for signal in source], [gated["id"]])
+            self.assertNotIn(legacy["id"], [signal["id"] for signal in source])
+
 
 if __name__ == "__main__":
     unittest.main()

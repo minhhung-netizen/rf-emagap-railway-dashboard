@@ -10,7 +10,9 @@ SESSION_COOKIE = "dashboard_session"
 ALL_FEATURES = [
     "overview",
     "positions",
+    "performance",
     "portfolioMonitor",
+    "dividends",
     "logs",
 ]
 

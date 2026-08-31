@@ -157,7 +157,9 @@ app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "app" / "static"), nam
 FEATURE_PATHS = {
     "overview": ("/api/summary", "/api/signals", "/api/chart/"),
     "positions": ("/api/performance",),
+    "performance": ("/api/performance",),
     "portfolioMonitor": ("/api/portfolio-backtests", "/api/portfolio-gate"),
+    "dividends": ("/api/dividend-events",),
     "logs": ("/api/invalid-signals", "/api/export/"),
 }
 RETIRED_API_PREFIXES = (
@@ -166,7 +168,6 @@ RETIRED_API_PREFIXES = (
     "/api/dca-",
     "/api/kelly-entries",
     "/api/backtest-stats",
-    "/api/dividend-events",
     "/api/settings/derivative-capital",
 )
 
@@ -1180,7 +1181,11 @@ def filtered_performance_signals(
 ) -> list[dict[str, Any]]:
     normalized_ticker = normalize_ticker(ticker)[0] if ticker else None
     signals = store.list_all_signals(ticker=normalized_ticker)
-    signals = visible_signals_for_user(signals, user)
+    signals = [
+        signal
+        for signal in visible_signals_for_user(signals, user)
+        if is_portfolio_gate_signal(signal)
+    ]
     if not strategy:
         return signals
     strategy_filter = strategy.strip().lower()
@@ -1189,6 +1194,12 @@ def filtered_performance_signals(
         for signal in signals
         if signal_matches_strategy_filter(signal, strategy_filter)
     ]
+
+
+def is_portfolio_gate_signal(signal: dict[str, Any]) -> bool:
+    payload = signal.get("payload") or {}
+    gate = payload.get("portfolio_gate") if isinstance(payload, dict) else None
+    return isinstance(gate, dict) and gate.get("version") == 1
 
 
 def signal_matches_strategy_filter(signal: dict[str, Any], strategy_filter: str) -> bool:
@@ -1606,16 +1617,11 @@ def sync_enrichment_dividends(enrichment: dict[str, Any]) -> int:
 
 
 def open_position_tickers() -> set[str]:
-    performance_data = build_performance(
-        store.list_all_signals(),
-        store.list_dividend_events(),
-    )
-    signal_tickers = {
-        str(trade.get("ticker") or "").upper()
-        for trade in performance_data["open_trades"]
-        if trade.get("ticker")
+    return {
+        str(position.get("ticker") or "").upper()
+        for position in portfolio_gate_state(store.list_all_signals())["positions"]
+        if position.get("ticker")
     }
-    return signal_tickers | set(store.list_open_manual_tickers())
 
 
 def cleanup_dividend_events_after_close(

@@ -271,7 +271,9 @@ let dcaInitialCapitalSaveTimer = null;
 const FEATURE_LABELS = {
   overview: "Tổng quan",
   positions: "Vị thế",
+  performance: "Hiệu suất",
   portfolioMonitor: "RF + EMA Monitor",
+  dividends: "Cổ tức",
   logs: "Nhật ký",
 };
 
@@ -1342,6 +1344,7 @@ const state = {
   signals: [],
   openTrades: [],
   closedTrades: [],
+  performanceClosedTrades: [],
   invalidSignals: [],
   performanceStrategies: [],
   backtestStats: [],
@@ -2751,6 +2754,8 @@ function applyTranslations() {
   renderRiskAlerts();
   renderKellyCalculator();
   renderKellyEntries();
+  renderPerformance(sortPerformance(state.performanceStrategies));
+  renderPerformanceClosedTrades(state.performanceClosedTrades);
   renderBacktestStats(filterBacktestStats(state.backtestStats));
   renderDcaEditState();
   renderDcaSizing();
@@ -2768,7 +2773,7 @@ function applyTheme() {
     renderChart(state.selectedTicker);
   }
   if (state.activeTab === "performance") {
-    drawEquityCurve(state.closedTrades);
+    drawEquityCurve(state.performanceClosedTrades);
   }
   if (state.activeTab === "manualPortfolio") {
     drawManualEquityCurve(state.manualPortfolio.equity_curve || []);
@@ -2808,7 +2813,7 @@ function setActiveTab(tabName) {
     renderChart(state.selectedTicker);
   }
   if (tabName === "performance") {
-    drawEquityCurve(state.closedTrades);
+    drawEquityCurve(state.performanceClosedTrades);
   }
   if (tabName === "manualPortfolio") {
     drawManualEquityCurve(state.manualPortfolio.equity_curve || []);
@@ -3092,6 +3097,7 @@ function settledPayload(result, fallback, label) {
 async function refresh() {
   if (!state.user) return;
   els.syncStatus.textContent = t("syncing");
+  const performanceQuery = buildPerformanceQuery();
   const results = await Promise.allSettled([
     fetchJson("/api/settings"),
     featureFetch("overview", "/api/summary", { total: 0, buy_count: 0, sell_count: 0, tickers: 0 }),
@@ -3102,9 +3108,18 @@ async function refresh() {
       strategies: [],
       ignored_signals: [],
     }),
+    featureFetch("performance", `/api/performance${performanceQuery}`, {
+      open_trades: [],
+      closed_trades: [],
+      strategies: [],
+    }),
     featureFetch("logs", "/api/invalid-signals", { invalid_signals: [] }),
     featureFetch("portfolioMonitor", "/api/portfolio-backtests/latest", { backtest: null }),
     featureFetch("portfolioMonitor", "/api/portfolio-gate", { guardrails: {}, state: {} }),
+    featureFetch("dividends", "/api/dividend-events", {
+      dividend_events: [],
+      dividend_alerts: [],
+    }),
   ]);
 
   const settingsPayload = settledPayload(
@@ -3128,16 +3143,26 @@ async function refresh() {
     },
     "positions"
   );
-  const invalidPayload = settledPayload(results[4], { invalid_signals: [] }, "invalid signals");
+  const performancePayload = settledPayload(
+    results[4],
+    { open_trades: [], closed_trades: [], strategies: [] },
+    "performance"
+  );
+  const invalidPayload = settledPayload(results[5], { invalid_signals: [] }, "invalid signals");
   const portfolioBacktestPayload = settledPayload(
-    results[5],
+    results[6],
     { backtest: state.portfolioBacktest },
     "portfolio backtest"
   );
   const portfolioGatePayload = settledPayload(
-    results[6],
+    results[7],
     { guardrails: {}, state: state.portfolioGate?.state || {} },
     "portfolio gate"
+  );
+  const dividendPayload = settledPayload(
+    results[8],
+    { dividend_events: [], dividend_alerts: [] },
+    "dividend events"
   );
 
   state.defaultSignalWeightPct = Number(settingsPayload.default_signal_weight_pct) || FALLBACK_SIGNAL_WEIGHT_PCT;
@@ -3150,7 +3175,15 @@ async function refresh() {
   updateOpenPositionStrategyFilterOptions(filterTradesForWatchlist(state.openTrades));
   renderOpenPositions();
   state.closedTrades = positionPayload.closed_trades || [];
+  state.performanceStrategies = performancePayload.strategies || [];
+  state.performanceClosedTrades = performancePayload.closed_trades || [];
+  updatePerformanceStrategyFilterOptions(state.performanceStrategies);
   renderClosedTrades(state.closedTrades);
+  renderPerformance(sortPerformance(state.performanceStrategies));
+  renderPerformanceClosedTrades(state.performanceClosedTrades);
+  if (state.activeTab === "performance") {
+    drawEquityCurve(state.performanceClosedTrades);
+  }
   renderRecentTradeBanner();
   renderAverageLossBanner();
   renderAverageGainBanner();
@@ -3165,6 +3198,10 @@ async function refresh() {
   renderInvalidSignals(state.invalidSignals);
   renderPortfolioBacktest(state.portfolioBacktest);
   renderPortfolioGate(state.portfolioGate);
+  state.dividendEvents = dividendPayload.dividend_events || [];
+  state.dividendAlerts = dividendPayload.dividend_alerts || [];
+  renderDividendEvents();
+  renderExDateAlerts();
   renderSummary(summary);
   renderUserAttention();
   renderRiskOverview();

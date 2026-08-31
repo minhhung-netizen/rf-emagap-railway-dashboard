@@ -59,6 +59,11 @@ parameter. This edition accepts stock `buy`, `sell`, `confirm_buy`, and
 `confirm_sell` signals only. Derivatives, DCA plans, Kelly allocation, and
 manual positions are deliberately retired from its live operation.
 
+The **Performance** tab reports only signals accepted by this portfolio gate;
+historical `Legacy` signals are excluded. The **Dividends** tab remains
+available for event entry and calendar monitoring, but ex-date alerts are
+limited to tickers with a gate-approved open position.
+
 The gate classifies a new `buy` as `RF` when the strategy name contains `rf`,
 or `EMA` when it contains `ema` or `gap`. You can override this with `sleeve`.
 It obtains the sector from the bundled VN alert-universe map or an explicit
