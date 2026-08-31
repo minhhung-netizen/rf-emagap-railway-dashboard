@@ -13,6 +13,7 @@ ALL_FEATURES = [
     "derivatives",
     "manualPortfolio",
     "performance",
+    "portfolioMonitor",
     "kelly",
     "dcaSizing",
     "dividends",

@@ -242,6 +242,21 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry
 ON user_sessions (expires_at);
+
+CREATE TABLE IF NOT EXISTS portfolio_backtests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    report_date TEXT NOT NULL,
+    title TEXT NOT NULL,
+    research_status TEXT NOT NULL,
+    generated_at TEXT,
+    received_at TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    UNIQUE(source, report_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_portfolio_backtests_received_at
+ON portfolio_backtests (received_at DESC);
 """
 
 
@@ -1756,6 +1771,83 @@ class SignalStore:
             "latest_received_at": latest["received_at"] if latest else None,
         }
 
+    def upsert_portfolio_backtest(
+        self,
+        *,
+        source: str,
+        report_date: str,
+        title: str,
+        research_status: str,
+        generated_at: str | None,
+        summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        received_at = utc_now_iso()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO portfolio_backtests (
+                    source, report_date, title, research_status, generated_at,
+                    received_at, summary_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source, report_date) DO UPDATE SET
+                    title = excluded.title,
+                    research_status = excluded.research_status,
+                    generated_at = excluded.generated_at,
+                    received_at = excluded.received_at,
+                    summary_json = excluded.summary_json
+                """,
+                (
+                    source.strip(),
+                    report_date.strip(),
+                    title.strip(),
+                    research_status.strip(),
+                    generated_at,
+                    received_at,
+                    json.dumps(summary, ensure_ascii=True),
+                ),
+            )
+        return self.get_portfolio_backtest(source=source, report_date=report_date)
+
+    def get_portfolio_backtest(
+        self, *, source: str, report_date: str
+    ) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM portfolio_backtests
+                WHERE source = ? AND report_date = ?
+                """,
+                (source.strip(), report_date.strip()),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"Portfolio backtest {source}:{report_date} was not found")
+        return row_to_portfolio_backtest(row)
+
+    def latest_portfolio_backtest(self) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM portfolio_backtests
+                ORDER BY report_date DESC, received_at DESC, id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return row_to_portfolio_backtest(row) if row else None
+
+    def list_portfolio_backtests(self, *, limit: int = 12) -> list[dict[str, Any]]:
+        limit = max(1, min(limit, 50))
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM portfolio_backtests
+                ORDER BY report_date DESC, received_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [row_to_portfolio_backtest(row) for row in rows]
+
 
 def row_to_signal(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
@@ -1767,6 +1859,12 @@ def row_to_signal(row: sqlite3.Row) -> dict[str, Any]:
 def row_to_invalid_signal(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["payload"] = json.loads(data.pop("payload_json") or "{}")
+    return data
+
+
+def row_to_portfolio_backtest(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["summary"] = json.loads(data.pop("summary_json") or "{}")
     return data
 
 

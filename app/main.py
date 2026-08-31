@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hmac
 import io
 import logging
 import sqlite3
@@ -155,6 +156,7 @@ FEATURE_PATHS = {
     "derivatives": ("/api/derivatives",),
     "manualPortfolio": ("/api/manual-portfolio",),
     "performance": ("/api/performance", "/api/backtest-stats", "/api/kelly-entries"),
+    "portfolioMonitor": ("/api/portfolio-backtests",),
     "kelly": ("/api/kelly-entries",),
     "dcaSizing": (
         "/api/dca-plans",
@@ -175,6 +177,7 @@ async def authorize_dashboard_request(request: Request, call_next):
         path == "/"
         or path == "/health"
         or path == "/webhook"
+        or path == "/api/portfolio-backtests/import"
         or path == "/api/auth/login"
         or path == "/api/auth/me"
         or path.startswith("/static/")
@@ -336,6 +339,17 @@ class DcaPlanPayload(BaseModel):
 
 class DcaSettingsPayload(BaseModel):
     initialCapital: float | None = Field(default=None, ge=0)
+
+
+class PortfolioBacktestImportPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = Field(..., min_length=1, max_length=100)
+    report_date: str = Field(..., min_length=1, max_length=40)
+    title: str = Field(..., min_length=1, max_length=160)
+    research_status: str = Field(default="research-release-candidate", max_length=80)
+    generated_at: str | None = Field(default=None, max_length=64)
+    summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class LoginPayload(BaseModel):
@@ -1066,6 +1080,37 @@ def dca_plan_values(payload: DcaPlanPayload, request: Request) -> dict[str, Any]
         "levels": payload.levels,
         "result": payload.result,
     }
+
+
+@app.get("/api/portfolio-backtests/latest")
+def latest_portfolio_backtest() -> dict[str, Any]:
+    return {"backtest": store.latest_portfolio_backtest()}
+
+
+@app.get("/api/portfolio-backtests")
+def list_portfolio_backtests(limit: int = 12) -> dict[str, Any]:
+    return {"backtests": store.list_portfolio_backtests(limit=limit)}
+
+
+@app.post("/api/portfolio-backtests/import")
+def import_portfolio_backtest(
+    payload: PortfolioBacktestImportPayload, request: Request
+) -> dict[str, Any]:
+    expected_token = settings.backtest_ingest_token
+    provided_token = request.headers.get("x-backtest-ingest-token")
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="Backtest import is not configured")
+    if not provided_token or not hmac.compare_digest(expected_token, provided_token):
+        raise HTTPException(status_code=401, detail="Invalid backtest ingest token")
+    backtest = store.upsert_portfolio_backtest(
+        source=payload.source,
+        report_date=payload.report_date,
+        title=payload.title,
+        research_status=payload.research_status,
+        generated_at=payload.generated_at,
+        summary=payload.summary,
+    )
+    return {"status": "saved", "backtest": backtest}
 
 
 @app.delete("/api/dca-plans/{plan_id}")

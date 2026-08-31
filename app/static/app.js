@@ -155,6 +155,15 @@ const els = {
   dcaPlanBody: document.querySelector("#dcaPlanBody"),
   dcaPlanClose: document.querySelector("#dcaPlanClose"),
   dcaPlanCloseBottom: document.querySelector("#dcaPlanCloseBottom"),
+  portfolioBacktestStatus: document.querySelector("#portfolioBacktestStatus"),
+  portfolioBacktestCagr: document.querySelector("#portfolioBacktestCagr"),
+  portfolioBacktestMdd: document.querySelector("#portfolioBacktestMdd"),
+  portfolioBacktestSharpe: document.querySelector("#portfolioBacktestSharpe"),
+  portfolioBacktestExposure: document.querySelector("#portfolioBacktestExposure"),
+  portfolioBacktestMeta: document.querySelector("#portfolioBacktestMeta"),
+  portfolioBacktestComparison: document.querySelector("#portfolioBacktestComparison"),
+  portfolioBacktestGuardrails: document.querySelector("#portfolioBacktestGuardrails"),
+  portfolioBacktestLimitations: document.querySelector("#portfolioBacktestLimitations"),
   languageSelect: document.querySelector("#languageSelect"),
   themeToggle: document.querySelector("#themeToggle"),
   tabButtons: document.querySelectorAll("[data-tab-target]"),
@@ -259,6 +268,7 @@ const FEATURE_LABELS = {
   derivatives: "Phái sinh VN30",
   manualPortfolio: "Danh mục tay",
   performance: "Hiệu suất",
+  portfolioMonitor: "RF + EMA Monitor",
   kelly: "Kelly",
   dcaSizing: "Phân bổ DCA",
   dividends: "Cổ tức",
@@ -1352,6 +1362,7 @@ const state = {
   summary: {},
   lastRefreshAt: null,
   derivatives: { summary: {}, open_positions: [], closed_trades: [], events: [] },
+  portfolioBacktest: null,
 };
 
 const priceChartState = {
@@ -3103,6 +3114,7 @@ async function refresh() {
     featureFetch(["positions", "performance", "kelly", "dcaSizing"], "/api/kelly-entries", { kelly_entries: state.kellyEntries }),
     featureFetch("dcaSizing", "/api/dca-plans", { dca_plans: state.dcaPlans }),
     featureFetch("dcaSizing", "/api/dca-settings", { dca_settings: state.dcaSettings }),
+    featureFetch("portfolioMonitor", "/api/portfolio-backtests/latest", { backtest: null }),
   ]);
 
   const settingsPayload = settledPayload(
@@ -3168,6 +3180,11 @@ async function refresh() {
     { dca_settings: state.dcaSettings },
     "DCA settings"
   );
+  const portfolioBacktestPayload = settledPayload(
+    results[13],
+    { backtest: state.portfolioBacktest },
+    "portfolio backtest"
+  );
 
   state.defaultSignalWeightPct = Number(settingsPayload.default_signal_weight_pct) || FALLBACK_SIGNAL_WEIGHT_PCT;
   state.summary = summary;
@@ -3186,6 +3203,7 @@ async function refresh() {
     renderDcaEditState();
   }
   state.dcaSettings = normalizeDcaSettings(dcaSettingsPayload.dca_settings || {});
+  state.portfolioBacktest = portfolioBacktestPayload.backtest || null;
   applyDcaSettingsToForm();
   state.openTrades = positionPayload.open_trades || [];
   updateOpenPositionStrategyFilterOptions(filterTradesForWatchlist(state.openTrades));
@@ -3215,6 +3233,7 @@ async function refresh() {
   renderBacktestStats(filterBacktestStats(state.backtestStats));
   renderDcaSizing();
   renderDcaPlans();
+  renderPortfolioBacktest(state.portfolioBacktest);
   state.manualPortfolio = manualPayload;
   renderManualPortfolio(manualPayload);
   state.dividendEvents = dividendPayload.dividend_events || [];
@@ -3240,6 +3259,65 @@ async function refresh() {
     renderTickerTimeline("");
     clearChart(t("noTickerSelected"));
   }
+}
+
+function renderPortfolioBacktest(report) {
+  const placeholder = "-";
+  if (!report) {
+    els.portfolioBacktestStatus.textContent = "Chưa có snapshot backtest. Chạy local rồi gửi báo cáo lên dashboard.";
+    els.portfolioBacktestCagr.textContent = placeholder;
+    els.portfolioBacktestMdd.textContent = placeholder;
+    els.portfolioBacktestSharpe.textContent = placeholder;
+    els.portfolioBacktestExposure.textContent = placeholder;
+    els.portfolioBacktestMeta.textContent = placeholder;
+    els.portfolioBacktestComparison.textContent = "Chưa có baseline để so sánh.";
+    els.portfolioBacktestGuardrails.textContent = placeholder;
+    els.portfolioBacktestLimitations.textContent = "Không phải lệnh giao dịch tự động.";
+    return;
+  }
+
+  const summary = report.summary || {};
+  const production = summary.variants?.production?.base || {};
+  const benchmark = summary.benchmark?.metrics || {};
+  const period = summary.common_period || {};
+  const guardrails = summary.guardrails || {};
+  const percent = (value) =>
+    Number.isFinite(Number(value)) ? formatPercent(Number(value) * 100) : placeholder;
+  const source = report.source || "local";
+  const title = report.title || "Portfolio backtest";
+  const reportDate = report.report_date ? formatDateOnly(report.report_date) : "-";
+
+  els.portfolioBacktestStatus.textContent = `${title} · ${report.research_status || "research"} · ${reportDate}`;
+  els.portfolioBacktestCagr.textContent = percent(production.cagr);
+  els.portfolioBacktestMdd.textContent = percent(production.max_drawdown);
+  els.portfolioBacktestSharpe.textContent = formatRatio(production.sharpe);
+  els.portfolioBacktestExposure.textContent = percent(production.average_exposure);
+  els.portfolioBacktestMeta.textContent = period.start_date && period.end_date
+    ? `${period.start_date} → ${period.end_date} (${Number(period.years || 0).toFixed(1)} năm)`
+    : `Nguồn ${source}`;
+
+  const spread = production.relative_to_benchmark?.cagr_spread;
+  const benchmarkCagr = benchmark.cagr;
+  if (Number.isFinite(Number(spread)) && Number.isFinite(Number(benchmarkCagr))) {
+    els.portfolioBacktestComparison.textContent = `VNINDEX CAGR ${percent(benchmarkCagr)} · chênh lệch ${percent(spread)}.`;
+  } else {
+    els.portfolioBacktestComparison.textContent = "So sánh VNINDEX chưa có trong snapshot.";
+  }
+
+  const cap = (label, value) => Number.isFinite(Number(value)) ? `${label} ${percent(value)}` : null;
+  const guardrailText = [
+    cap("Tổng", guardrails.total_exposure_cap),
+    cap("Ngành", guardrails.sector_cap),
+    cap("Mã", guardrails.ticker_cap),
+    cap("RF", guardrails.rf_hard_cap),
+    cap("EMA", guardrails.ema_hard_cap),
+  ].filter(Boolean).join(" · ");
+  els.portfolioBacktestGuardrails.textContent = guardrailText || "Chưa có ràng buộc trong snapshot.";
+
+  const limitations = Array.isArray(summary.limitations) ? summary.limitations : [];
+  els.portfolioBacktestLimitations.textContent = limitations.length
+    ? limitations.join(" ")
+    : "Kết quả là chuẩn nghiên cứu/paper-trading; không phải lệnh giao dịch tự động.";
 }
 
 function filterSignalsForWatchlist(signals) {

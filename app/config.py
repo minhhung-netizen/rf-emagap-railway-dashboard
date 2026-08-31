@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 class Settings:
     database_path: Path
     webhook_secret: str | None = None
+    backtest_ingest_token: str | None = None
     price_refresh_minutes: int = 120
     market_sessions: str = "09:00-11:30,13:00-15:00"
     duplicate_window_minutes: int = 5
@@ -47,6 +48,7 @@ def get_settings() -> Settings:
     _load_env_file()
     database_path = _resolve_path(os.getenv("DATABASE_PATH", "data/signals.db"))
     secret = os.getenv("WEBHOOK_SECRET") or None
+    backtest_ingest_token = os.getenv("BACKTEST_INGEST_TOKEN") or None
     refresh_minutes = int(os.getenv("PRICE_REFRESH_MINUTES", "120"))
     market_sessions = os.getenv("MARKET_SESSIONS", "09:00-11:30,13:00-15:00")
     duplicate_window_minutes = int(os.getenv("DUPLICATE_WINDOW_MINUTES", "5"))
@@ -80,6 +82,7 @@ def get_settings() -> Settings:
     return Settings(
         database_path=database_path,
         webhook_secret=secret,
+        backtest_ingest_token=backtest_ingest_token,
         price_refresh_minutes=max(1, refresh_minutes),
         market_sessions=market_sessions,
         duplicate_window_minutes=max(1, duplicate_window_minutes),

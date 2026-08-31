@@ -62,6 +62,7 @@
         <button class="tabButton" type="button" data-tab-target="derivatives" data-i18n="tabDerivatives">VN30 Derivatives</button>
         <button class="tabButton" type="button" data-tab-target="manualPortfolio" data-i18n="tabManualPortfolio">Manual Portfolio</button>
         <button class="tabButton" type="button" data-tab-target="performance" data-i18n="tabPerformance">Performance</button>
+        <button class="tabButton" type="button" data-tab-target="portfolioMonitor">RF + EMA Monitor</button>
         <button class="tabButton" type="button" data-tab-target="kelly" data-i18n="tabKelly">Kelly</button>
         <button class="tabButton" type="button" data-tab-target="dcaSizing" data-i18n="tabDcaSizing">DCA Sizing</button>
         <button class="tabButton" type="button" data-tab-target="dividends" data-i18n="tabDividends">Dividends</button>
@@ -711,6 +712,37 @@
               <tbody id="performanceClosedTradesTable"></tbody>
             </table>
           </div>
+        </section>
+      </div>
+
+      <div class="tabPanel" data-tab-panel="portfolioMonitor">
+        <section class="portfolioMonitorPanel">
+          <div class="panelHead">
+            <div>
+              <p class="eyebrow">Paper-trading baseline</p>
+              <h2>RF + EMA Gap Portfolio Monitor</h2>
+            </div>
+            <span id="portfolioBacktestStatus">Chưa có snapshot backtest</span>
+          </div>
+          <div class="metrics portfolioMonitorMetrics">
+            <article><span>CAGR cơ sở</span><strong id="portfolioBacktestCagr">-</strong></article>
+            <article><span>Max drawdown</span><strong id="portfolioBacktestMdd">-</strong></article>
+            <article><span>Sharpe</span><strong id="portfolioBacktestSharpe">-</strong></article>
+            <article><span>Exposure trung bình</span><strong id="portfolioBacktestExposure">-</strong></article>
+          </div>
+          <div class="portfolioMonitorGrid">
+            <article>
+              <p class="eyebrow">Khoảng kiểm định</p>
+              <strong id="portfolioBacktestMeta">-</strong>
+              <p id="portfolioBacktestComparison" class="portfolioMonitorNote">-</p>
+            </article>
+            <article>
+              <p class="eyebrow">Ràng buộc danh mục</p>
+              <strong id="portfolioBacktestGuardrails">-</strong>
+              <p class="portfolioMonitorNote">Tín hiệu TradingView vẫn đi qua cùng cơ chế lọc trùng và xác nhận vị thế của dashboard.</p>
+            </article>
+          </div>
+          <p id="portfolioBacktestLimitations" class="portfolioMonitorFootnote">Chạy local và gửi snapshot để làm chuẩn đánh giá. Không phải lệnh giao dịch tự động.</p>
         </section>
       </div>
 

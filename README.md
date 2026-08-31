@@ -2,6 +2,11 @@
 
 MVP dashboard for receiving TradingView webhook alerts, storing signals in SQLite, enriching Vietnamese stock tickers with `vnstock` in the background, and showing a local web dashboard.
 
+For the Railway-ready RF Stock MTF + EMA Gap monitoring flow, see
+[RAILWAY_PORTFOLIO_MONITOR.md](RAILWAY_PORTFOLIO_MONITOR.md). It keeps live
+TradingView alerts and locally computed portfolio backtest snapshots separated by
+different credentials.
+
 ## Stack
 
 - Backend: FastAPI

@@ -261,6 +261,31 @@ class SignalStoreTest(unittest.TestCase):
                 "250000000",
             )
 
+    def test_upserts_portfolio_backtest_by_source_and_report_date(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            saved = store.upsert_portfolio_backtest(
+                source="rf-emagap-combined",
+                report_date="2026-08-31",
+                title="RF + EMA Gap Portfolio Monitor",
+                research_status="research-release-candidate",
+                generated_at="2026-08-31T08:32:11Z",
+                summary={"common_period": {"start_date": "2015-07-01"}},
+            )
+            updated = store.upsert_portfolio_backtest(
+                source="rf-emagap-combined",
+                report_date="2026-08-31",
+                title="Updated portfolio monitor",
+                research_status="paper-trading",
+                generated_at="2026-08-31T10:00:00Z",
+                summary={"common_period": {"end_date": "2026-07-15"}},
+            )
+
+            self.assertEqual(saved["id"], updated["id"])
+            self.assertEqual(updated["title"], "Updated portfolio monitor")
+            self.assertEqual(updated["summary"]["common_period"]["end_date"], "2026-07-15")
+            self.assertEqual(len(store.list_portfolio_backtests()), 1)
+
     def test_record_and_list_invalid_signal(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SignalStore(Path(temp_dir) / "signals.db")

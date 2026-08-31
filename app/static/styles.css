@@ -941,6 +941,7 @@ main {
 .performancePanel,
 .performanceHistoryPanel,
 .backtestStatsPanel,
+.portfolioMonitorPanel,
 .kellyPanel,
 .dcaSizingPanel,
 .dcaSavedSection,
@@ -1033,6 +1034,7 @@ main {
 .performancePanel,
 .performanceHistoryPanel,
 .backtestStatsPanel,
+.portfolioMonitorPanel,
 .kellyPanel,
 .dcaSizingPanel,
 .dcaSavedSection,
@@ -1063,6 +1065,7 @@ main {
 .tabPanel > .manualDailyPanel,
 .tabPanel > .performanceHistoryPanel,
 .tabPanel > .backtestStatsPanel,
+.tabPanel > .portfolioMonitorPanel,
 .tabPanel > .kellyPanel,
 .tabPanel > .dcaSizingPanel,
 .tabPanel > .dcaSavedSection,
@@ -1079,6 +1082,7 @@ main {
 .tabPanel > .manualDailyPanel,
 .tabPanel > .performanceHistoryPanel,
 .tabPanel > .backtestStatsPanel,
+.tabPanel > .portfolioMonitorPanel,
 .tabPanel > .kellyPanel,
 .tabPanel > .dcaSizingPanel,
 .tabPanel > .dcaSavedSection,
@@ -1309,6 +1313,50 @@ main {
   gap: 18px;
   grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
   padding: 16px;
+}
+
+.portfolioMonitorPanel {
+  overflow: hidden;
+}
+
+.portfolioMonitorMetrics {
+  margin: 16px;
+}
+
+.portfolioMonitorGrid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0 16px 16px;
+}
+
+.portfolioMonitorGrid article {
+  background: var(--panel-raised);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  min-width: 0;
+  padding: 16px;
+}
+
+.portfolioMonitorGrid strong {
+  display: block;
+  font-size: 15px;
+  line-height: 1.45;
+  margin-top: 5px;
+}
+
+.portfolioMonitorNote,
+.portfolioMonitorFootnote {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+
+.portfolioMonitorFootnote {
+  border-top: 1px solid var(--line-soft);
+  margin: 0;
+  padding: 13px 16px;
 }
 
 .dcaSizingForm {
