@@ -181,6 +181,7 @@ const els = {
   chart: document.querySelector("#priceChart"),
   chartEmpty: document.querySelector("#priceChartEmpty"),
   equityCanvas: document.querySelector("#equityChart"),
+  portfolioMetrics: document.querySelector("#portfolioMetrics"),
   manualEquityCanvas: document.querySelector("#manualEquityChart"),
   dividendEventForm: document.querySelector("#dividendEventForm"),
   dividendTicker: document.querySelector("#dividendTicker"),
@@ -427,6 +428,15 @@ const translations = {
     manualDeleteFailed: "Could not delete manual position",
     equityCurve: "Equity Curve",
     closedTradeGrowth: "Closed Trade Growth",
+    noClosedTradeMetrics: "No closed trades to calculate portfolio metrics",
+    metricTotalReturn: "Total return",
+    metricMaxDrawdown: "Maximum drawdown",
+    metricProfitFactor: "Profit factor",
+    metricWinRate: "Win rate",
+    metricExpectancy: "Expectancy / trade",
+    metricSharpe: "Sharpe / trade",
+    metricSortino: "Sortino / trade",
+    metricClosedTradesCount: "Closed trades",
     invalidSignalLog: "Invalid Signal Log",
     ignoredAlerts: "Ignored Alerts",
     reason: "Reason",
@@ -830,6 +840,15 @@ Object.assign(translations.vi, {
   manualDeleteFailed: "Không thể xóa vị thế tay",
   equityCurve: "Đường vốn",
   closedTradeGrowth: "Tăng trưởng lệnh đã đóng",
+  noClosedTradeMetrics: "Chưa có lệnh đóng để tính chỉ số danh mục",
+  metricTotalReturn: "Tổng lợi nhuận",
+  metricMaxDrawdown: "Sụt giảm tối đa",
+  metricProfitFactor: "Hệ số lợi nhuận",
+  metricWinRate: "Tỷ lệ thắng",
+  metricExpectancy: "Kỳ vọng / lệnh",
+  metricSharpe: "Sharpe (mỗi lệnh)",
+  metricSortino: "Sortino (mỗi lệnh)",
+  metricClosedTradesCount: "Số lệnh đóng",
   invalidSignalLog: "Log tín hiệu lỗi",
   ignoredAlerts: "Cảnh báo bị bỏ qua",
   reason: "Lý do",
@@ -3200,6 +3219,7 @@ async function refresh() {
   renderClosedTrades(state.closedTrades);
   renderPerformance(sortPerformance(state.performanceStrategies));
   renderPerformanceClosedTrades(state.performanceClosedTrades);
+  renderPortfolioMetrics();
   if (state.activeTab === "performance") {
     drawEquityCurve(state.performanceClosedTrades);
   }
@@ -5213,6 +5233,107 @@ function formatReason(reason) {
   }[reason] || reason || "-";
 }
 
+function computeAllocatedPortfolioMetrics(closedTrades) {
+  const trades = (closedTrades || [])
+    .map((trade) => {
+      const allocated = allocatedReturnPct(
+        trade.return_pct,
+        portfolioTradeWeightPct(trade)
+      );
+      return Number.isFinite(Number(allocated))
+        ? { allocated: Number(allocated), exitTime: String(trade.exit_time || "") }
+        : null;
+    })
+    .filter(Boolean);
+  if (!trades.length) {
+    return {
+      closed_trades: 0, total_return_pct: null, max_drawdown_pct: null,
+      profit_factor: null, win_rate_pct: null, expectancy_pct: null,
+      sharpe: null, sortino: null,
+    };
+  }
+
+  const ordered = [...trades].sort((left, right) => left.exitTime.localeCompare(right.exitTime));
+  let equity = 100;
+  let peak = 100;
+  let maxDrawdown = 0;
+  ordered.forEach(({ allocated }) => {
+    equity *= 1 + allocated / 100;
+    peak = Math.max(peak, equity);
+    if (peak > 0) maxDrawdown = Math.min(maxDrawdown, ((equity - peak) / peak) * 100);
+  });
+
+  const returns = trades.map((trade) => trade.allocated);
+  const wins = returns.filter((value) => value > 0);
+  const losses = returns.filter((value) => value < 0);
+  const gainSum = wins.reduce((sum, value) => sum + value, 0);
+  const lossSum = Math.abs(losses.reduce((sum, value) => sum + value, 0));
+  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance = returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / returns.length;
+  const std = Math.sqrt(variance);
+  const downsideStd = Math.sqrt(losses.reduce((sum, value) => sum + value * value, 0) / returns.length);
+  return {
+    closed_trades: returns.length,
+    total_return_pct: (equity / 100 - 1) * 100,
+    max_drawdown_pct: maxDrawdown,
+    profit_factor: lossSum > 0 ? gainSum / lossSum : null,
+    win_rate_pct: (wins.length / returns.length) * 100,
+    expectancy_pct: mean,
+    sharpe: std > 0 ? mean / std : null,
+    sortino: downsideStd > 0 ? mean / downsideStd : null,
+  };
+}
+
+function portfolioTradeWeightPct(trade) {
+  const ticker = String(trade?.ticker || "").toUpperCase();
+  const strategy = String(trade?.strategy || "").trim();
+  const entrySignal = (state.signals || []).find(
+    (signal) => Number(signal.id) === Number(trade?.entry_signal_id)
+  );
+  const baseGate = entrySignal?.payload?.portfolio_gate;
+  const baseWeight = Number(baseGate?.allocation_pct);
+  if (!Number.isFinite(baseWeight) || baseWeight <= 0) {
+    return kellyAllocationPct(ticker, strategy);
+  }
+  const entryTime = String(trade?.entry_time || "");
+  const exitTime = String(trade?.exit_time || "\uffff");
+  const topUps = (state.signals || []).reduce((sum, signal) => {
+    const gate = signal?.payload?.portfolio_gate;
+    const signalTime = String(signal?.source_time || signal?.received_at || "");
+    const matchingPosition = String(gate?.position_strategy || "").trim() === strategy;
+    if (
+      String(signal?.action || "").toLowerCase() !== "confirm_buy" ||
+      String(signal?.ticker || "").toUpperCase() !== ticker ||
+      !matchingPosition || signalTime < entryTime || signalTime > exitTime
+    ) return sum;
+    const allocation = Number(gate?.allocation_pct);
+    return sum + (Number.isFinite(allocation) && allocation > 0 ? allocation : 0);
+  }, 0);
+  return baseWeight + topUps;
+}
+
+function renderPortfolioMetrics() {
+  if (!els.portfolioMetrics) return;
+  const metrics = computeAllocatedPortfolioMetrics(state.performanceClosedTrades);
+  if (!metrics.closed_trades) {
+    els.portfolioMetrics.innerHTML = `<div class="empty">${escapeHtml(t("noClosedTradeMetrics"))}</div>`;
+    return;
+  }
+  const items = [
+    { label: t("metricTotalReturn"), value: formatSignedPercent(metrics.total_return_pct) },
+    { label: t("metricMaxDrawdown"), value: formatSignedPercent(metrics.max_drawdown_pct) },
+    { label: t("metricProfitFactor"), value: formatRatio(metrics.profit_factor) },
+    { label: t("metricWinRate"), value: formatPercent(metrics.win_rate_pct) },
+    { label: t("metricExpectancy"), value: formatSignedPercent(metrics.expectancy_pct) },
+    { label: t("metricSharpe"), value: formatRatio(metrics.sharpe) },
+    { label: t("metricSortino"), value: formatRatio(metrics.sortino) },
+    { label: t("metricClosedTradesCount"), value: String(metrics.closed_trades) },
+  ];
+  els.portfolioMetrics.innerHTML = items.map((item) => `
+    <article><span>${escapeHtml(item.label)}</span><strong>${item.value}</strong></article>
+  `).join("");
+}
+
 function drawEquityCurve(closedTrades) {
   const canvas = els.equityCanvas;
   const ctx = canvas.getContext("2d");
@@ -5236,8 +5357,7 @@ function drawEquityCurve(closedTrades) {
   const points = [{ value: 100, label: "Start" }];
   sorted.forEach((trade) => {
     const previous = points[points.length - 1].value;
-    const allocatedReturn =
-      allocatedReturnPct(trade.return_pct, kellyAllocationPct(trade.ticker, trade.strategy)) || 0;
+    const allocatedReturn = allocatedReturnPct(trade.return_pct, portfolioTradeWeightPct(trade)) || 0;
     points.push({
       value: previous * (1 + allocatedReturn / 100),
       label: trade.ticker,
