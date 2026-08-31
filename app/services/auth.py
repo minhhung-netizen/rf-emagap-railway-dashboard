@@ -10,13 +10,7 @@ SESSION_COOKIE = "dashboard_session"
 ALL_FEATURES = [
     "overview",
     "positions",
-    "derivatives",
-    "manualPortfolio",
-    "performance",
     "portfolioMonitor",
-    "kelly",
-    "dcaSizing",
-    "dividends",
     "logs",
 ]
 
@@ -57,7 +51,11 @@ def hash_session_token(token: str) -> str:
 
 
 def public_user(user: dict) -> dict:
-    features = ALL_FEATURES if user.get("role") == "admin" else user.get("features", [])
+    features = (
+        ALL_FEATURES
+        if user.get("role") == "admin"
+        else [feature for feature in user.get("features", []) if feature in ALL_FEATURES]
+    )
     strategies = [] if user.get("role") == "admin" else user.get("strategies", [])
     return {
         "id": user["id"],

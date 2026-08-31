@@ -164,6 +164,12 @@ const els = {
   portfolioBacktestComparison: document.querySelector("#portfolioBacktestComparison"),
   portfolioBacktestGuardrails: document.querySelector("#portfolioBacktestGuardrails"),
   portfolioBacktestLimitations: document.querySelector("#portfolioBacktestLimitations"),
+  portfolioGateSource: document.querySelector("#portfolioGateSource"),
+  portfolioGateExposure: document.querySelector("#portfolioGateExposure"),
+  portfolioGatePositions: document.querySelector("#portfolioGatePositions"),
+  portfolioGateRf: document.querySelector("#portfolioGateRf"),
+  portfolioGateEma: document.querySelector("#portfolioGateEma"),
+  portfolioGatePolicy: document.querySelector("#portfolioGatePolicy"),
   languageSelect: document.querySelector("#languageSelect"),
   themeToggle: document.querySelector("#themeToggle"),
   tabButtons: document.querySelectorAll("[data-tab-target]"),
@@ -265,13 +271,7 @@ let dcaInitialCapitalSaveTimer = null;
 const FEATURE_LABELS = {
   overview: "Tổng quan",
   positions: "Vị thế",
-  derivatives: "Phái sinh VN30",
-  manualPortfolio: "Danh mục tay",
-  performance: "Hiệu suất",
   portfolioMonitor: "RF + EMA Monitor",
-  kelly: "Kelly",
-  dcaSizing: "Phân bổ DCA",
-  dividends: "Cổ tức",
   logs: "Nhật ký",
 };
 
@@ -1363,6 +1363,7 @@ const state = {
   lastRefreshAt: null,
   derivatives: { summary: {}, open_positions: [], closed_trades: [], events: [] },
   portfolioBacktest: null,
+  portfolioGate: null,
 };
 
 const priceChartState = {
@@ -2830,8 +2831,11 @@ async function fetchJson(url) {
 
 function featureEnabled(feature) {
   if (!state.user) return false;
-  if (state.user.role === "admin") return true;
   const required = Array.isArray(feature) ? feature : [feature];
+  if (state.user.role === "admin") {
+    const available = new Set(state.availableFeatures || []);
+    return required.some((item) => available.has(item));
+  }
   return required.some((item) => state.user.features.includes(item));
 }
 
@@ -3088,33 +3092,19 @@ function settledPayload(result, fallback, label) {
 async function refresh() {
   if (!state.user) return;
   els.syncStatus.textContent = t("syncing");
-  const query = "";
-  const performanceQuery = buildPerformanceQuery();
   const results = await Promise.allSettled([
     fetchJson("/api/settings"),
     featureFetch("overview", "/api/summary", { total: 0, buy_count: 0, sell_count: 0, tickers: 0 }),
-    featureFetch("overview", `/api/signals${query}`, { signals: [] }),
-    featureFetch(["positions", "performance"], "/api/performance", {
-      open_trades: [],
-      closed_trades: [],
-      strategies: [],
-      ignored_signals: [],
-    }),
-    featureFetch("performance", `/api/performance${performanceQuery}`, {
+    featureFetch("overview", "/api/signals", { signals: [] }),
+    featureFetch("positions", "/api/performance", {
       open_trades: [],
       closed_trades: [],
       strategies: [],
       ignored_signals: [],
     }),
     featureFetch("logs", "/api/invalid-signals", { invalid_signals: [] }),
-    featureFetch("manualPortfolio", "/api/manual-portfolio", state.manualPortfolio),
-    featureFetch("dividends", "/api/dividend-events", { dividend_events: [], dividend_alerts: [] }),
-    featureFetch("derivatives", "/api/derivatives", state.derivatives),
-    featureFetch(["performance", "dcaSizing"], "/api/backtest-stats", { backtest_stats: [] }),
-    featureFetch(["positions", "performance", "kelly", "dcaSizing"], "/api/kelly-entries", { kelly_entries: state.kellyEntries }),
-    featureFetch("dcaSizing", "/api/dca-plans", { dca_plans: state.dcaPlans }),
-    featureFetch("dcaSizing", "/api/dca-settings", { dca_settings: state.dcaSettings }),
     featureFetch("portfolioMonitor", "/api/portfolio-backtests/latest", { backtest: null }),
+    featureFetch("portfolioMonitor", "/api/portfolio-gate", { guardrails: {}, state: {} }),
   ]);
 
   const settingsPayload = settledPayload(
@@ -3138,87 +3128,32 @@ async function refresh() {
     },
     "positions"
   );
-  const performancePayload = settledPayload(
-    results[4],
-    {
-      open_trades: [],
-      closed_trades: [],
-      strategies: [],
-      ignored_signals: [],
-    },
-    "performance"
-  );
-  const invalidPayload = settledPayload(results[5], { invalid_signals: [] }, "invalid signals");
-  const manualPayload = settledPayload(results[6], state.manualPortfolio, "manual portfolio");
-  const dividendPayload = settledPayload(
-    results[7],
-    { dividend_events: state.dividendEvents, dividend_alerts: state.dividendAlerts },
-    "dividend events"
-  );
-  const derivativePayload = settledPayload(
-    results[8],
-    state.derivatives,
-    "derivatives"
-  );
-  const backtestPayload = settledPayload(
-    results[9],
-    { backtest_stats: state.backtestStats },
-    "backtest stats"
-  );
-  const kellyPayload = settledPayload(
-    results[10],
-    { kelly_entries: state.kellyEntries },
-    "kelly entries"
-  );
-  const dcaPlansPayload = settledPayload(
-    results[11],
-    { dca_plans: state.dcaPlans },
-    "DCA plans"
-  );
-  const dcaSettingsPayload = settledPayload(
-    results[12],
-    { dca_settings: state.dcaSettings },
-    "DCA settings"
-  );
+  const invalidPayload = settledPayload(results[4], { invalid_signals: [] }, "invalid signals");
   const portfolioBacktestPayload = settledPayload(
-    results[13],
+    results[5],
     { backtest: state.portfolioBacktest },
     "portfolio backtest"
+  );
+  const portfolioGatePayload = settledPayload(
+    results[6],
+    { guardrails: {}, state: state.portfolioGate?.state || {} },
+    "portfolio gate"
   );
 
   state.defaultSignalWeightPct = Number(settingsPayload.default_signal_weight_pct) || FALLBACK_SIGNAL_WEIGHT_PCT;
   state.summary = summary;
   state.signals = filterSignalsForWatchlist(signalsPayload.signals || []);
   renderSignals();
-  state.backtestStats = backtestPayload.backtest_stats || [];
-  state.kellyEntries = await migrateLocalKellyEntriesToDatabase(
-    (kellyPayload.kelly_entries || []).map(normalizeKellyEntry)
-  );
-  state.dcaPlans = (dcaPlansPayload.dca_plans || []).map(normalizeDcaPlan);
-  if (
-    state.activeDcaPlanId &&
-    !state.dcaPlans.some((plan) => String(plan.id) === String(state.activeDcaPlanId))
-  ) {
-    state.activeDcaPlanId = "";
-    renderDcaEditState();
-  }
-  state.dcaSettings = normalizeDcaSettings(dcaSettingsPayload.dca_settings || {});
   state.portfolioBacktest = portfolioBacktestPayload.backtest || null;
-  applyDcaSettingsToForm();
+  state.portfolioGate = portfolioGatePayload;
   state.openTrades = positionPayload.open_trades || [];
   updateOpenPositionStrategyFilterOptions(filterTradesForWatchlist(state.openTrades));
-  state.performanceStrategies = positionPayload.strategies || [];
-  updatePerformanceStrategyFilterOptions([...state.performanceStrategies, ...state.backtestStats]);
-  updateDcaSizingStrategyOptions([...state.performanceStrategies, ...state.backtestStats, ...state.kellyEntries]);
   renderOpenPositions();
   state.closedTrades = positionPayload.closed_trades || [];
   renderClosedTrades(state.closedTrades);
   renderRecentTradeBanner();
   renderAverageLossBanner();
   renderAverageGainBanner();
-  if (state.activeTab === "performance") {
-    drawEquityCurve(performancePayload.closed_trades || []);
-  }
   state.invalidSignals = [
     ...(positionPayload.ignored_signals || []).map((item) => ({
       ...item,
@@ -3228,25 +3163,12 @@ async function refresh() {
     ...(invalidPayload.invalid_signals || []),
   ];
   renderInvalidSignals(state.invalidSignals);
-  renderPerformance(sortPerformance(performancePayload.strategies || []));
-  renderPerformanceClosedTrades(performancePayload.closed_trades || []);
-  renderBacktestStats(filterBacktestStats(state.backtestStats));
-  renderDcaSizing();
-  renderDcaPlans();
   renderPortfolioBacktest(state.portfolioBacktest);
-  state.manualPortfolio = manualPayload;
-  renderManualPortfolio(manualPayload);
-  state.dividendEvents = dividendPayload.dividend_events || [];
-  state.dividendAlerts = dividendPayload.dividend_alerts || [];
-  renderDividendEvents();
-  renderExDateAlerts();
+  renderPortfolioGate(state.portfolioGate);
   renderSummary(summary);
   renderUserAttention();
   renderRiskOverview();
   renderRiskAlerts();
-  renderKellyEntries();
-  state.derivatives = derivativePayload;
-  renderDerivatives(derivativePayload);
   state.lastRefreshAt = new Date();
   els.syncStatus.textContent = t("syncedJustNow");
 
@@ -3318,6 +3240,35 @@ function renderPortfolioBacktest(report) {
   els.portfolioBacktestLimitations.textContent = limitations.length
     ? limitations.join(" ")
     : "Kết quả là chuẩn nghiên cứu/paper-trading; không phải lệnh giao dịch tự động.";
+}
+
+function renderPortfolioGate(gate) {
+  const placeholder = "-";
+  const current = gate?.state || {};
+  const guardrails = gate?.guardrails || {};
+  const percent = (value) =>
+    Number.isFinite(Number(value)) ? formatPercent(Number(value)) : placeholder;
+  const cap = (value) =>
+    Number.isFinite(Number(value)) ? formatPercent(Number(value) * 100) : placeholder;
+
+  els.portfolioGateExposure.textContent = percent(current.total_exposure_pct);
+  els.portfolioGatePositions.textContent = Array.isArray(current.positions)
+    ? current.positions.length
+    : 0;
+  els.portfolioGateRf.textContent = percent(current.by_sleeve_pct?.RF || 0);
+  els.portfolioGateEma.textContent = percent(current.by_sleeve_pct?.EMA || 0);
+  els.portfolioGateSource.textContent = gate?.source_report_date
+    ? `Snapshot ${formatDateOnly(gate.source_report_date)}`
+    : "Dùng ràng buộc mặc định";
+  els.portfolioGatePolicy.textContent = [
+    `Trần tổng ${cap(guardrails.total_exposure_cap)}`,
+    `mã ${cap(guardrails.ticker_cap)}`,
+    `ngành ${cap(guardrails.sector_cap)}`,
+    `RF ${cap(guardrails.rf_hard_cap)}`,
+    `EMA ${cap(guardrails.ema_hard_cap)}`,
+    `Buy mặc định ${formatPercent(state.defaultSignalWeightPct)}`,
+    "confirm-buy chỉ được top-up vị thế base đang mở",
+  ].join(" · ");
 }
 
 function filterSignalsForWatchlist(signals) {
@@ -5164,7 +5115,21 @@ function formatReason(reason) {
     position_already_open: "positionAlreadyOpen",
     base_strategy_not_open: "baseStrategyNotOpen",
   }[reason];
-  return key ? t(key) : reason || "-";
+  if (key) return t(key);
+  return {
+    total_exposure_cap: "Vượt trần exposure tổng",
+    ticker_cap: "Vượt trần tỷ trọng mã",
+    sector_cap: "Vượt trần tỷ trọng ngành",
+    rf_sleeve_cap: "Vượt trần RF sleeve",
+    ema_sleeve_cap: "Vượt trần EMA sleeve",
+    same_ticker_position_open: "Mã này đã có vị thế đang mở",
+    sector_not_mapped: "Chưa ánh xạ ngành cho mã này",
+    unsupported_portfolio_strategy: "Chỉ nhận chiến lược RF hoặc EMA",
+    unsupported_portfolio_action: "Loại lệnh không thuộc portfolio gate",
+    invalid_allocation_pct: "Tỷ trọng lệnh không hợp lệ",
+    portfolio_base_position_not_open: "Chưa có vị thế base qua portfolio gate",
+    portfolio_position_not_open: "Không có vị thế gate để đóng",
+  }[reason] || reason || "-";
 }
 
 function drawEquityCurve(closedTrades) {
@@ -5489,7 +5454,7 @@ function summarizeSignals(signals) {
 
 function renderSignals() {
   if (!state.signals.length) {
-    els.table.innerHTML = `<tr><td class="empty" colspan="7">${t("noSignals")}</td></tr>`;
+    els.table.innerHTML = `<tr><td class="empty" colspan="8">${t("noSignals")}</td></tr>`;
     els.signalCards.innerHTML = `<div class="empty">${t("noSignals")}</div>`;
     return;
   }
@@ -5505,6 +5470,7 @@ function renderSignals() {
           <td>${formatPrice(signal.price)}</td>
           <td>${escapeHtml(signal.timeframe || "-")}</td>
           <td>${escapeHtml(displayStrategyName(signal.strategy) || "-")}</td>
+          <td>${escapeHtml(formatSignalGate(signal))}</td>
           <td class="adminOnly">
             <button class="deleteButton" type="button" data-delete-id="${signal.id}" title="${escapeHtml(t("deleteTitle"))}" aria-label="${escapeHtml(`${t("deleteTitle")} ${signal.id}`)}">${escapeHtml(t("delete"))}</button>
           </td>
@@ -5520,7 +5486,7 @@ function renderSignals() {
           <span class="side ${action}">${escapeHtml(signal.action)}</span>
           <div>
             <strong>${escapeHtml(signal.ticker)}</strong>
-            <span class="signalCardMeta">${escapeHtml(displayStrategyName(signal.strategy) || "-")} · ${escapeHtml(signal.timeframe || "-")}</span>
+            <span class="signalCardMeta">${escapeHtml(displayStrategyName(signal.strategy) || "-")} · ${escapeHtml(signal.timeframe || "-")} · ${escapeHtml(formatSignalGate(signal))}</span>
           </div>
           <strong>${formatPrice(signal.price)}</strong>
           <time>${formatSignalTime(signal)}</time>
@@ -5541,6 +5507,14 @@ function renderSignals() {
       await deleteSignal(button.dataset.deleteId);
     });
   });
+}
+
+function formatSignalGate(signal) {
+  const gate = signal?.payload?.portfolio_gate;
+  if (!gate || gate.version !== 1) return "Legacy";
+  const allocation = Number(gate.allocation_pct);
+  const allocationText = Number.isFinite(allocation) ? formatPercent(allocation) : "-";
+  return [gate.sleeve || "-", gate.sector || "-", allocationText].join(" · ");
 }
 
 async function deleteSignal(signalId) {

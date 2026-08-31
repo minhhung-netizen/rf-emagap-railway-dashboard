@@ -1,11 +1,15 @@
 # TradingView VN Signals Dashboard
 
-MVP dashboard for receiving TradingView webhook alerts, storing signals in SQLite, enriching Vietnamese stock tickers with `vnstock` in the background, and showing a local web dashboard.
+RF + EMA portfolio gate for receiving TradingView webhook alerts, storing
+approved stock signals in SQLite, enriching Vietnamese tickers with `vnstock`
+in the background, and showing a local monitoring dashboard.
 
 For the Railway-ready RF Stock MTF + EMA Gap monitoring flow, see
 [RAILWAY_PORTFOLIO_MONITOR.md](RAILWAY_PORTFOLIO_MONITOR.md). It keeps live
-TradingView alerts and locally computed portfolio backtest snapshots separated by
-different credentials.
+TradingView alerts and locally computed portfolio backtest snapshots separated
+by different credentials. This Railway edition retires live DCA/Kelly/manual
+allocation and derivatives features so that one controlled portfolio-gate
+policy decides whether an alert is accepted.
 
 ## Stack
 

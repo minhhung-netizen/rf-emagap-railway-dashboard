@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VN Signals Dashboard</title>
+    <title>RF + EMA Portfolio Gate</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/static/styles.css?v=20260628-hide-hold-stats" />
   </head>
@@ -27,8 +27,8 @@
 
     <header class="topbar">
       <div class="brandBlock">
-        <p class="eyebrow" data-i18n="webhookLabel">Signal Dashboard</p>
-        <h1>VN Signals Dashboard</h1>
+        <p class="eyebrow" data-i18n="webhookLabel">Portfolio Gate</p>
+        <h1>RF + EMA Portfolio Gate</h1>
         <span id="syncStatus" class="syncStatus">Đang đồng bộ...</span>
       </div>
       <div class="actions">
@@ -59,13 +59,7 @@
       <nav class="tabs" aria-label="Dashboard sections">
         <button class="tabButton active" type="button" data-tab-target="overview" data-i18n="tabOverview">Overview</button>
         <button class="tabButton" type="button" data-tab-target="positions" data-i18n="tabPositions">Positions</button>
-        <button class="tabButton" type="button" data-tab-target="derivatives" data-i18n="tabDerivatives">VN30 Derivatives</button>
-        <button class="tabButton" type="button" data-tab-target="manualPortfolio" data-i18n="tabManualPortfolio">Manual Portfolio</button>
-        <button class="tabButton" type="button" data-tab-target="performance" data-i18n="tabPerformance">Performance</button>
         <button class="tabButton" type="button" data-tab-target="portfolioMonitor">RF + EMA Monitor</button>
-        <button class="tabButton" type="button" data-tab-target="kelly" data-i18n="tabKelly">Kelly</button>
-        <button class="tabButton" type="button" data-tab-target="dcaSizing" data-i18n="tabDcaSizing">DCA Sizing</button>
-        <button class="tabButton" type="button" data-tab-target="dividends" data-i18n="tabDividends">Dividends</button>
         <button class="tabButton" type="button" data-tab-target="logs" data-i18n="tabLogs">Logs</button>
         <button class="tabButton" type="button" data-tab-target="admin">Quản trị</button>
       </nav>
@@ -205,6 +199,7 @@
                     <th data-i18n="price">Price</th>
                     <th data-i18n="timeframe">Timeframe</th>
                     <th data-i18n="strategy">Strategy</th>
+                    <th>Gate</th>
                     <th class="adminOnly"></th>
                   </tr>
                 </thead>
@@ -730,6 +725,22 @@
             <article><span>Sharpe</span><strong id="portfolioBacktestSharpe">-</strong></article>
             <article><span>Exposure trung bình</span><strong id="portfolioBacktestExposure">-</strong></article>
           </div>
+          <div class="portfolioGateStatus">
+            <div class="panelHead compactHead">
+              <div>
+                <p class="eyebrow">Webhook portfolio gate</p>
+                <h2>Exposure đang được chấp nhận</h2>
+              </div>
+              <span id="portfolioGateSource">Chưa có snapshot chuẩn</span>
+            </div>
+            <div class="metrics portfolioGateMetrics">
+              <article><span>Exposure hiện tại</span><strong id="portfolioGateExposure">-</strong></article>
+              <article><span>Số vị thế</span><strong id="portfolioGatePositions">-</strong></article>
+              <article><span>RF sleeve</span><strong id="portfolioGateRf">-</strong></article>
+              <article><span>EMA sleeve</span><strong id="portfolioGateEma">-</strong></article>
+            </div>
+            <p id="portfolioGatePolicy" class="portfolioMonitorFootnote">Các lệnh Buy chỉ được lưu khi thỏa exposure tổng, mã, ngành và sleeve.</p>
+          </div>
           <div class="portfolioMonitorGrid">
             <article>
               <p class="eyebrow">Khoảng kiểm định</p>
@@ -739,7 +750,7 @@
             <article>
               <p class="eyebrow">Ràng buộc danh mục</p>
               <strong id="portfolioBacktestGuardrails">-</strong>
-              <p class="portfolioMonitorNote">Tín hiệu TradingView vẫn đi qua cùng cơ chế lọc trùng và xác nhận vị thế của dashboard.</p>
+              <p class="portfolioMonitorNote">Buy và confirm-buy đều phải qua cổng danh mục; các mô-đun DCA/Kelly và phân bổ thủ công đã ngừng dùng.</p>
             </article>
           </div>
           <p id="portfolioBacktestLimitations" class="portfolioMonitorFootnote">Chạy local và gửi snapshot để làm chuẩn đánh giá. Không phải lệnh giao dịch tự động.</p>

@@ -1,9 +1,9 @@
 # Railway: TradingView signals + RF/EMA portfolio benchmark
 
 This branch is designed for one Railway service running the existing FastAPI
-dashboard. The service receives TradingView alerts, applies the dashboard's
-existing duplicate/confirmation filters, and shows the most recently published
-RF Stock MTF + EMA Gap backtest snapshot as a paper-trading benchmark.
+dashboard. The service receives TradingView alerts through an RF + EMA
+portfolio gate, then shows the most recently published RF Stock MTF + EMA Gap
+backtest snapshot as its paper-trading benchmark.
 
 It does not place broker orders. A signal appearing in the dashboard is not a
 recommendation or an automated order.
@@ -11,7 +11,7 @@ recommendation or an automated order.
 ## Architecture
 
 ```text
-TradingView alert -- WEBHOOK_SECRET --> /webhook --> dashboard filters --> signal monitor
+TradingView alert -- WEBHOOK_SECRET --> /webhook --> RF + EMA portfolio gate --> signal monitor
 
 Local RF + EMA backtest -- BACKTEST_INGEST_TOKEN --> /api/portfolio-backtests/import
                                                   --> portfolio monitor baseline
@@ -55,8 +55,48 @@ https://<your-domain>/webhook
 ```
 
 Include `WEBHOOK_SECRET` as the existing `secret` property or `?secret=` query
-parameter. The dashboard continues to classify signals, reject duplicates, and
-reject confirmation signals that do not have the required base position.
+parameter. This edition accepts stock `buy`, `sell`, `confirm_buy`, and
+`confirm_sell` signals only. Derivatives, DCA plans, Kelly allocation, and
+manual positions are deliberately retired from its live operation.
+
+The gate classifies a new `buy` as `RF` when the strategy name contains `rf`,
+or `EMA` when it contains `ema` or `gap`. You can override this with `sleeve`.
+It obtains the sector from the bundled VN alert-universe map or an explicit
+`sector` property. A signal may include `allocation_pct`; absent that field,
+the dashboard uses `DEFAULT_SIGNAL_WEIGHT_PCT` (5 by default).
+
+```json
+{
+  "ticker": "HOSE:VPB",
+  "action": "buy",
+  "price": "19.50",
+  "timeframe": "D",
+  "strategy": "RF Stock MTF",
+  "allocation_pct": 5,
+  "secret": "<WEBHOOK_SECRET>"
+}
+```
+
+For a confirmation, provide the base position strategy. The confirmation can
+only top up a base position previously accepted by the portfolio gate:
+
+```json
+{
+  "ticker": "HOSE:VPB",
+  "action": "confirm_buy",
+  "strategy": "EMA confirmation",
+  "base_strategy": "RF Stock MTF",
+  "allocation_pct": 5,
+  "secret": "<WEBHOOK_SECRET>"
+}
+```
+
+Every new allocation is rejected when it would exceed the latest snapshot's
+total-exposure, ticker, sector, RF-sleeve, or EMA-sleeve limit. Duplicate
+signals are also rejected. The webhook response returns the accepted
+classification or rejection reason; the **RF + EMA Monitor** and **Logs** tabs
+show the same result. Signals from before this gate version are marked
+`Legacy` and do not consume the new gate's exposure.
 
 ## Publish a local RF + EMA snapshot
 

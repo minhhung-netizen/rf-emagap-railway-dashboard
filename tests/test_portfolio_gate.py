@@ -1,0 +1,253 @@
+import asyncio
+import json
+import tempfile
+import unittest
+from dataclasses import replace
+from pathlib import Path
+from unittest.mock import patch
+
+from starlette.requests import Request
+
+import app.main as dashboard_main
+from app.database import SignalStore
+from app.services.portfolio_gate import (
+    evaluate_portfolio_signal,
+    guardrails_from_backtest,
+    portfolio_gate_state,
+)
+
+
+def stored_signal(*, signal_id, ticker, strategy, action, classification):
+    return {
+        "id": signal_id,
+        "ticker": ticker,
+        "strategy": strategy,
+        "action": action,
+        "received_at": f"2026-08-31T00:00:0{signal_id}+00:00",
+        "payload": {"portfolio_gate": classification},
+    }
+
+
+def webhook_request(payload):
+    body = json.dumps(payload).encode("utf-8")
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.disconnect"}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/webhook",
+            "headers": [(b"content-type", b"application/json")],
+        },
+        receive,
+    )
+
+
+class PortfolioGateTest(unittest.TestCase):
+    def test_snapshot_guardrails_override_the_defaults(self):
+        guardrails = guardrails_from_backtest(
+            {
+                "summary": {
+                    "guardrails": {
+                        "total_exposure_cap": 0.9,
+                        "sector_cap": 0.4,
+                        "ticker_cap": 0.08,
+                        "rf_hard_cap": 0.7,
+                        "ema_hard_cap": 0.3,
+                    }
+                }
+            }
+        )
+
+        self.assertEqual(guardrails["total_exposure_cap"], 0.9)
+        self.assertEqual(guardrails["sector_cap"], 0.4)
+        self.assertEqual(guardrails["ticker_cap"], 0.08)
+        self.assertEqual(guardrails["rf_hard_cap"], 0.7)
+        self.assertEqual(guardrails["ema_hard_cap"], 0.3)
+
+    def test_confirm_buy_is_a_constrained_top_up_of_a_gated_base_position(self):
+        first = evaluate_portfolio_signal(
+            payload={"strategy": "RF Stock MTF"},
+            ticker="VPB",
+            exchange="HOSE",
+            action="buy",
+            signals=[],
+            backtest=None,
+            default_allocation_pct=5,
+        )
+        self.assertTrue(first["allowed"])
+        signals = [
+            stored_signal(
+                signal_id=1,
+                ticker="VPB",
+                strategy="RF Stock MTF",
+                action="buy",
+                classification=first["classification"],
+            )
+        ]
+
+        second = evaluate_portfolio_signal(
+            payload={"strategy": "EMA confirmation"},
+            ticker="VPB",
+            exchange="HOSE",
+            action="confirm_buy",
+            signals=signals,
+            backtest=None,
+            default_allocation_pct=5,
+            base_strategy="RF Stock MTF",
+        )
+        self.assertTrue(second["allowed"])
+        self.assertEqual(second["classification"]["position_strategy"], "RF Stock MTF")
+        signals.append(
+            stored_signal(
+                signal_id=2,
+                ticker="VPB",
+                strategy="EMA confirmation",
+                action="confirm_buy",
+                classification=second["classification"],
+            )
+        )
+
+        rejected = evaluate_portfolio_signal(
+            payload={"strategy": "EMA confirmation"},
+            ticker="VPB",
+            exchange="HOSE",
+            action="confirm_buy",
+            signals=signals,
+            backtest=None,
+            default_allocation_pct=5,
+            base_strategy="RF Stock MTF",
+        )
+        self.assertFalse(rejected["allowed"])
+        self.assertEqual(rejected["reason"], "ticker_cap")
+        self.assertEqual(portfolio_gate_state(signals)["total_exposure_pct"], 10)
+
+    def test_sector_cap_rejects_a_new_bank_position(self):
+        classifications = []
+        for ticker, allocation in (("VPB", 10), ("ACB", 10), ("MBB", 10), ("TCB", 5)):
+            classifications.append(
+                {
+                    "version": 1,
+                    "sleeve": "RF",
+                    "sector": "banking",
+                    "allocation_pct": allocation,
+                    "position_strategy": "RF Stock MTF",
+                }
+            )
+        signals = [
+            stored_signal(
+                signal_id=index,
+                ticker=ticker,
+                strategy="RF Stock MTF",
+                action="buy",
+                classification=classification,
+            )
+            for index, ((ticker, _), classification) in enumerate(
+                zip((("VPB", 10), ("ACB", 10), ("MBB", 10), ("TCB", 5)), classifications),
+                start=1,
+            )
+        ]
+
+        rejected = evaluate_portfolio_signal(
+            payload={"strategy": "RF Stock MTF", "allocation_pct": 5},
+            ticker="HDB",
+            exchange="HOSE",
+            action="buy",
+            signals=signals,
+            backtest=None,
+            default_allocation_pct=5,
+        )
+
+        self.assertFalse(rejected["allowed"])
+        self.assertEqual(rejected["reason"], "sector_cap")
+
+    def test_signals_from_before_the_gate_do_not_consume_new_gate_exposure(self):
+        accepted = evaluate_portfolio_signal(
+            payload={"strategy": "EMA Gap Stock"},
+            ticker="FPT",
+            exchange="HOSE",
+            action="buy",
+            signals=[
+                {
+                    "id": 1,
+                    "ticker": "FPT",
+                    "strategy": "Legacy DCA",
+                    "action": "buy",
+                    "received_at": "2026-08-01T00:00:00+00:00",
+                    "payload": {},
+                }
+            ],
+            backtest=None,
+            default_allocation_pct=5,
+        )
+
+        self.assertTrue(accepted["allowed"])
+        self.assertEqual(accepted["classification"]["sleeve"], "EMA")
+        self.assertEqual(accepted["classification"]["sector"], "technology")
+
+    def test_webhook_saves_the_gate_classification_and_rejects_excess_top_up(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            settings = replace(
+                dashboard_main.settings,
+                webhook_secret="gate-test-secret",
+                default_signal_weight_pct=5,
+            )
+            base = {
+                "ticker": "HOSE:VPB",
+                "price": 20000,
+                "timeframe": "D",
+                "secret": "gate-test-secret",
+            }
+            with patch.object(dashboard_main, "store", store), patch.object(
+                dashboard_main, "settings", settings
+            ), patch.object(dashboard_main, "enqueue_signal_enrichment"):
+                first = asyncio.run(
+                    dashboard_main.receive_webhook(
+                        webhook_request(
+                            {**base, "action": "buy", "strategy": "RF Stock MTF"}
+                        )
+                    )
+                )
+                top_up = asyncio.run(
+                    dashboard_main.receive_webhook(
+                        webhook_request(
+                            {
+                                **base,
+                                "action": "confirm_buy",
+                                "strategy": "EMA confirmation",
+                                "base_strategy": "RF Stock MTF",
+                            }
+                        )
+                    )
+                )
+                rejected = asyncio.run(
+                    dashboard_main.receive_webhook(
+                        webhook_request(
+                            {
+                                **base,
+                                "action": "confirm_buy",
+                                "strategy": "EMA confirmation 2",
+                                "base_strategy": "RF Stock MTF",
+                            }
+                        )
+                    )
+                )
+
+            self.assertEqual(first["status"], "accepted")
+            self.assertEqual(first["classification"]["sleeve"], "RF")
+            self.assertEqual(first["classification"]["sector"], "banking")
+            self.assertEqual(top_up["status"], "accepted")
+            self.assertEqual(rejected["status"], "rejected")
+            self.assertEqual(rejected["reason"], "ticker_cap")
+
+
+if __name__ == "__main__":
+    unittest.main()

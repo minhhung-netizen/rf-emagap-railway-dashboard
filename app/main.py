@@ -42,6 +42,11 @@ from app.services.manual_portfolio import (
     market_date_iso,
 )
 from app.services.performance import DEFAULT_STRATEGY, build_performance
+from app.services.portfolio_gate import (
+    evaluate_portfolio_signal,
+    guardrails_from_backtest,
+    portfolio_gate_state,
+)
 from app.services.webhook_payload import parse_forgiving_json
 from app.services.auth import (
     ALL_FEATURES,
@@ -129,7 +134,6 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(signal_enrichment_worker()),
         asyncio.create_task(price_refresh_loop()),
-        asyncio.create_task(manual_portfolio_automation_loop()),
     ]
     try:
         yield
@@ -140,7 +144,7 @@ async def lifespan(app: FastAPI):
         enrichment_queue = None
 
 
-app = FastAPI(title="VN Signals Dashboard", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="RF + EMA Portfolio Gate", version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -152,27 +156,29 @@ app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "app" / "static"), nam
 
 FEATURE_PATHS = {
     "overview": ("/api/summary", "/api/signals", "/api/chart/"),
-    "positions": ("/api/performance", "/api/kelly-entries"),
-    "derivatives": ("/api/derivatives",),
-    "manualPortfolio": ("/api/manual-portfolio",),
-    "performance": ("/api/performance", "/api/backtest-stats", "/api/kelly-entries"),
-    "portfolioMonitor": ("/api/portfolio-backtests",),
-    "kelly": ("/api/kelly-entries",),
-    "dcaSizing": (
-        "/api/dca-plans",
-        "/api/dca-settings",
-        "/api/backtest-stats",
-        "/api/kelly-entries",
-        "/api/chart/",
-    ),
-    "dividends": ("/api/dividend-events",),
+    "positions": ("/api/performance",),
+    "portfolioMonitor": ("/api/portfolio-backtests", "/api/portfolio-gate"),
     "logs": ("/api/invalid-signals", "/api/export/"),
 }
+RETIRED_API_PREFIXES = (
+    "/api/derivatives",
+    "/api/manual-portfolio",
+    "/api/dca-",
+    "/api/kelly-entries",
+    "/api/backtest-stats",
+    "/api/dividend-events",
+    "/api/settings/derivative-capital",
+)
 
 
 @app.middleware("http")
 async def authorize_dashboard_request(request: Request, call_next):
     path = request.url.path
+    if path.startswith(RETIRED_API_PREFIXES):
+        return JSONResponse(
+            {"detail": "This Railway portfolio-gate edition does not include this feature"},
+            status_code=410,
+        )
     if (
         path == "/"
         or path == "/health"
@@ -244,6 +250,10 @@ class WebhookPayload(BaseModel):
     reason: str | None = None
     take_profit: str | float | int | None = None
     stop_loss: str | float | int | None = None
+    allocation_pct: str | float | int | None = None
+    sleeve: str | None = None
+    portfolio_sleeve: str | None = None
+    sector: str | None = None
 
 
 class ManualPositionPayload(BaseModel):
@@ -538,8 +548,6 @@ def available_signal_strategies() -> list[str]:
 def dashboard_settings() -> dict[str, Any]:
     return {
         "default_signal_weight_pct": settings.default_signal_weight_pct,
-        "derivative_contract_multiplier": settings.derivative_contract_multiplier,
-        "derivative_initial_capital": derivative_initial_capital(),
         "market_data_provider": (
             "fireant+dnse"
             if fireant_enricher is not None and dnse_enricher is not None
@@ -568,7 +576,10 @@ async def receive_webhook(
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
     if is_derivative_payload(payload):
-        return receive_derivative_webhook(payload)
+        raise HTTPException(
+            status_code=422,
+            detail="This Railway portfolio-gate edition accepts RF/EMA stock signals only",
+        )
 
     try:
         ticker, exchange = normalize_ticker(payload.ticker)
@@ -577,29 +588,13 @@ async def receive_webhook(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     is_confirmation = is_confirmation_signal(payload, action)
+    payload_data = payload.model_dump()
     required_open_strategy = required_open_strategy_for_signal(payload, action)
     if is_confirmation and not required_open_strategy:
         raise HTTPException(
             status_code=422,
             detail="Confirmation signals require base_strategy or confirm_for",
         )
-    if required_open_strategy and not has_open_strategy(ticker, required_open_strategy):
-        invalid_signal = store.record_invalid_signal(
-            ticker=ticker,
-            action=action,
-            timeframe=payload.timeframe,
-            strategy=payload.strategy,
-            reason="base_strategy_not_open",
-            source_time=payload.time,
-            payload=payload.model_dump(),
-        )
-        return {
-            "status": "rejected",
-            "reason": "base_strategy_not_open",
-            "required_open_strategy": required_open_strategy,
-            "invalid_signal": invalid_signal,
-        }
-
     duplicate = store.find_duplicate_signal(
         ticker=ticker,
         action=action,
@@ -616,9 +611,37 @@ async def receive_webhook(
             strategy=payload.strategy,
             reason="duplicate_webhook",
             source_time=payload.time,
-            payload=payload.model_dump(),
+            payload=payload_data,
         )
         return {"status": "duplicate", "signal": duplicate}
+
+    gate = evaluate_portfolio_signal(
+        payload=payload_data,
+        ticker=ticker,
+        exchange=exchange,
+        action=action,
+        signals=store.list_all_signals(),
+        backtest=store.latest_portfolio_backtest(),
+        default_allocation_pct=settings.default_signal_weight_pct,
+        base_strategy=required_open_strategy,
+    )
+    if not gate["allowed"]:
+        invalid_signal = store.record_invalid_signal(
+            ticker=ticker,
+            action=action,
+            timeframe=payload.timeframe,
+            strategy=payload.strategy,
+            reason=gate["reason"],
+            source_time=payload.time,
+            payload=payload_data,
+        )
+        return {
+            "status": "rejected",
+            "reason": gate["reason"],
+            "guardrails": gate["guardrails"],
+            "invalid_signal": invalid_signal,
+        }
+    payload_data["portfolio_gate"] = gate["classification"]
 
     ticker_was_open = action == "sell" and ticker in open_position_tickers()
     signal = store.insert_signal(
@@ -630,7 +653,7 @@ async def receive_webhook(
         strategy=payload.strategy,
         note=payload.note,
         source_time=payload.time,
-        payload=payload.model_dump(),
+        payload=payload_data,
         enrichment={"status": "pending", "ticker": ticker, "history": [], "metrics": {}},
     )
     removed_dividend_events = cleanup_dividend_events_after_close(
@@ -641,6 +664,7 @@ async def receive_webhook(
     return {
         "status": "accepted",
         "signal": signal,
+        "classification": gate["classification"],
         "removed_dividend_events": removed_dividend_events,
     }
 
@@ -726,23 +750,6 @@ def required_open_strategy_for_signal(payload: WebhookPayload, action: str) -> s
 def is_confirmation_signal(payload: WebhookPayload, action: str) -> bool:
     signal_type = (payload.signal_type or "").strip().lower()
     return signal_type in {"confirm", "confirmation"} or action.startswith("confirm")
-
-
-def has_open_strategy(ticker: str, strategy: str) -> bool:
-    target_strategy = strategy.strip().lower()
-    if not target_strategy:
-        return False
-    is_open = False
-    for signal in store.list_all_signals(ticker=ticker):
-        signal_strategy = (signal.get("strategy") or DEFAULT_STRATEGY).strip().lower()
-        if signal_strategy != target_strategy:
-            continue
-        action = (signal.get("action") or "").strip().lower()
-        if action == "buy":
-            is_open = True
-        elif action == "sell":
-            is_open = False
-    return is_open
 
 
 @app.get("/api/signals")
@@ -1079,6 +1086,17 @@ def dca_plan_values(payload: DcaPlanPayload, request: Request) -> dict[str, Any]
         "lot_size": payload.lotSize,
         "levels": payload.levels,
         "result": payload.result,
+    }
+
+
+@app.get("/api/portfolio-gate")
+def portfolio_gate() -> dict[str, Any]:
+    backtest = store.latest_portfolio_backtest()
+    return {
+        "guardrails": guardrails_from_backtest(backtest),
+        "state": portfolio_gate_state(store.list_all_signals()),
+        "source_report_date": backtest.get("report_date") if backtest else None,
+        "source_title": backtest.get("title") if backtest else None,
     }
 
 
@@ -1476,7 +1494,7 @@ async def price_refresh_loop() -> None:
     while True:
         try:
             if is_market_open(sessions=settings.market_sessions):
-                await refresh_open_position_prices()
+                await refresh_open_position_prices(include_manual=False)
         except asyncio.CancelledError:
             raise
         except BaseException:

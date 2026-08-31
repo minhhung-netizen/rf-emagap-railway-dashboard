@@ -1330,6 +1330,14 @@ main {
   padding: 0 16px 16px;
 }
 
+.portfolioGateStatus {
+  border-top: 1px solid var(--line-soft);
+}
+
+.portfolioGateMetrics {
+  margin: 16px;
+}
+
 .portfolioMonitorGrid article {
   background: var(--panel-raised);
   border: 1px solid var(--line-soft);
