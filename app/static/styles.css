@@ -1365,6 +1365,27 @@ main {
   padding: 0 16px 16px;
 }
 
+.portfolioAttentionPanel {
+  border-top: 1px solid var(--line-soft);
+}
+
+.portfolioAttentionPanel .panelHead {
+  padding: 16px 16px 0;
+}
+
+.portfolioAttentionPanel .portfolioMonitorNote {
+  margin: 8px 16px 0;
+}
+
+.portfolioAttentionTableWrap {
+  margin-top: 12px;
+}
+
+.portfolioAttentionTableWrap th,
+.portfolioAttentionTableWrap td {
+  white-space: nowrap;
+}
+
 .portfolioGateStatus {
   border-top: 1px solid var(--line-soft);
 }

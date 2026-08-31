@@ -165,6 +165,9 @@ const els = {
   portfolioBacktestComparison: document.querySelector("#portfolioBacktestComparison"),
   portfolioBacktestGuardrails: document.querySelector("#portfolioBacktestGuardrails"),
   portfolioBacktestLimitations: document.querySelector("#portfolioBacktestLimitations"),
+  portfolioAttentionMeta: document.querySelector("#portfolioAttentionMeta"),
+  portfolioAttentionStatus: document.querySelector("#portfolioAttentionStatus"),
+  portfolioAttentionTable: document.querySelector("#portfolioAttentionTable"),
   portfolioGateSource: document.querySelector("#portfolioGateSource"),
   portfolioGateExposure: document.querySelector("#portfolioGateExposure"),
   portfolioGatePositions: document.querySelector("#portfolioGatePositions"),
@@ -3272,6 +3275,7 @@ function renderPortfolioBacktest(report) {
     els.portfolioBacktestComparison.textContent = "Chưa có baseline để so sánh.";
     els.portfolioBacktestGuardrails.textContent = placeholder;
     els.portfolioBacktestLimitations.textContent = "Không phải lệnh giao dịch tự động.";
+    renderPortfolioAttentionList(null);
     return;
   }
 
@@ -3317,6 +3321,59 @@ function renderPortfolioBacktest(report) {
   els.portfolioBacktestLimitations.textContent = limitations.length
     ? limitations.join(" ")
     : "Kết quả là chuẩn nghiên cứu/paper-trading; không phải lệnh giao dịch tự động.";
+  renderPortfolioAttentionList(summary.attention_list);
+}
+
+function renderPortfolioAttentionList(attention) {
+  if (!els.portfolioAttentionTable) return;
+  const rows = Array.isArray(attention?.rows) ? attention.rows : [];
+  if (!rows.length) {
+    els.portfolioAttentionMeta.textContent = "-";
+    els.portfolioAttentionStatus.textContent = "Chưa có danh sách rebalance trong snapshot local.";
+    els.portfolioAttentionTable.innerHTML = '<tr><td colspan="11" class="emptyCell">Chưa có dữ liệu.</td></tr>';
+    return;
+  }
+
+  const selectedCount = Number(attention.selected_count) || rows.length;
+  const eligibleCount = Number(attention.eligible_count);
+  const asOf = attention.as_of ? formatDateOnly(attention.as_of) : "-";
+  const from = attention.lookback_from ? formatDateOnly(attention.lookback_from) : null;
+  const source = attention.source || "EMA Gap Daily";
+  const signedFraction = (value) => Number.isFinite(Number(value))
+    ? formatSignedPercent(Number(value) * 100)
+    : "-";
+  const negativeFraction = (value) => Number.isFinite(Number(value))
+    ? formatSignedPercent(-Math.abs(Number(value)) * 100)
+    : "-";
+  const fractionPercent = (value) => Number.isFinite(Number(value))
+    ? formatPercent(Number(value) * 100)
+    : "-";
+
+  els.portfolioAttentionMeta.textContent = Number.isFinite(eligibleCount)
+    ? `${selectedCount}/${eligibleCount} mã đủ điều kiện`
+    : `${selectedCount} mã`;
+  els.portfolioAttentionStatus.textContent = `${source} · rebalance ${asOf}${from ? ` · mẫu đánh giá ${from} → ${asOf}` : ""}.`;
+  els.portfolioAttentionTable.innerHTML = rows
+    .slice()
+    .sort((left, right) => Number(left.rank || Infinity) - Number(right.rank || Infinity))
+    .map((row) => {
+      const ticker = row.ticker || String(row.symbol || "").split(":").pop() || "-";
+      const status = row.status === "new" ? "Mới vào" : "Giữ lại";
+      const statusClass = row.status === "new" ? "confirmedTicker" : "";
+      return `<tr>
+        <td><strong>${escapeHtml(ticker)}</strong></td>
+        <td>${escapeHtml(row.sleeve || attention.sleeve || "EMA")}</td>
+        <td>${Number.isFinite(Number(row.rank)) ? `#${Number(row.rank)}` : "-"}</td>
+        <td>${Number.isFinite(Number(row.score)) ? Number(row.score).toFixed(1) : "-"}</td>
+        <td>${signedFraction(row.rs)}</td>
+        <td>${Number.isFinite(Number(row.closed_positions)) ? Number(row.closed_positions) : "-"}</td>
+        <td>${signedFraction(row.total_return)}</td>
+        <td>${formatRatio(row.profit_factor)}</td>
+        <td>${fractionPercent(row.win_rate)}</td>
+        <td>${negativeFraction(row.max_drawdown)}</td>
+        <td><span class="${statusClass}">${status}</span></td>
+      </tr>`;
+    }).join("");
 }
 
 function renderPortfolioGate(gate) {

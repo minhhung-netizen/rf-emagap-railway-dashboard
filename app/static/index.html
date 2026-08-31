@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RF + EMA Portfolio Gate</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/styles.css?v=20260628-hide-hold-stats" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260831-rebalance-watchlist" />
   </head>
   <body>
     <div id="loginScreen" class="loginScreen">
@@ -760,6 +760,36 @@
               <p class="portfolioMonitorNote">Buy và confirm-buy đều phải qua cổng danh mục; các mô-đun DCA/Kelly và phân bổ thủ công đã ngừng dùng.</p>
             </article>
           </div>
+          <div class="portfolioAttentionPanel">
+            <div class="panelHead compactHead">
+              <div>
+                <p class="eyebrow">Danh sách chú ý sau rebalance</p>
+                <h2>EMA Gap Daily</h2>
+              </div>
+              <span id="portfolioAttentionMeta">-</span>
+            </div>
+            <p id="portfolioAttentionStatus" class="portfolioMonitorNote">Chưa có danh sách rebalance trong snapshot local.</p>
+            <div class="tableWrap portfolioAttentionTableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Mã</th>
+                    <th>Sleeve</th>
+                    <th>Hạng</th>
+                    <th>Điểm EMA</th>
+                    <th>RS</th>
+                    <th>Lệnh đóng</th>
+                    <th>Tổng L/L</th>
+                    <th>PF</th>
+                    <th>Tỷ lệ thắng</th>
+                    <th>Max DD</th>
+                    <th>Trạng thái</th>
+                  </tr>
+                </thead>
+                <tbody id="portfolioAttentionTable"></tbody>
+              </table>
+            </div>
+          </div>
           <p id="portfolioBacktestLimitations" class="portfolioMonitorFootnote">Chạy local và gửi snapshot để làm chuẩn đánh giá. Không phải lệnh giao dịch tự động.</p>
         </section>
       </div>
@@ -1286,6 +1316,6 @@
     </div>
 
     <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
-    <script src="/static/app.js?v=20260628-hide-hold-stats"></script>
+    <script src="/static/app.js?v=20260831-rebalance-watchlist"></script>
   </body>
 </html>
