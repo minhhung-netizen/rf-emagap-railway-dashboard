@@ -168,6 +168,10 @@ const els = {
   portfolioAttentionMeta: document.querySelector("#portfolioAttentionMeta"),
   portfolioAttentionStatus: document.querySelector("#portfolioAttentionStatus"),
   portfolioAttentionTable: document.querySelector("#portfolioAttentionTable"),
+  portfolioRfAttentionMeta: document.querySelector("#portfolioRfAttentionMeta"),
+  portfolioRfAttentionStatus: document.querySelector("#portfolioRfAttentionStatus"),
+  portfolioRfAttentionTable: document.querySelector("#portfolioRfAttentionTable"),
+  portfolioRfMetrics: document.querySelector("#portfolioRfMetrics"),
   portfolioGateSource: document.querySelector("#portfolioGateSource"),
   portfolioGateExposure: document.querySelector("#portfolioGateExposure"),
   portfolioGatePositions: document.querySelector("#portfolioGatePositions"),
@@ -3276,6 +3280,7 @@ function renderPortfolioBacktest(report) {
     els.portfolioBacktestGuardrails.textContent = placeholder;
     els.portfolioBacktestLimitations.textContent = "Không phải lệnh giao dịch tự động.";
     renderPortfolioAttentionList(null);
+    renderPortfolioRfAttentionList(null);
     return;
   }
 
@@ -3321,7 +3326,9 @@ function renderPortfolioBacktest(report) {
   els.portfolioBacktestLimitations.textContent = limitations.length
     ? limitations.join(" ")
     : "Kết quả là chuẩn nghiên cứu/paper-trading; không phải lệnh giao dịch tự động.";
-  renderPortfolioAttentionList(summary.attention_list);
+  const attentionLists = summary.attention_lists || {};
+  renderPortfolioAttentionList(attentionLists.ema || summary.attention_list);
+  renderPortfolioRfAttentionList(attentionLists.rf);
 }
 
 function renderPortfolioAttentionList(attention) {
@@ -3371,6 +3378,66 @@ function renderPortfolioAttentionList(attention) {
         <td>${formatRatio(row.profit_factor)}</td>
         <td>${fractionPercent(row.win_rate)}</td>
         <td>${negativeFraction(row.max_drawdown)}</td>
+        <td><span class="${statusClass}">${status}</span></td>
+      </tr>`;
+    }).join("");
+}
+
+function renderPortfolioRfAttentionList(attention) {
+  if (!els.portfolioRfAttentionTable || !els.portfolioRfMetrics) return;
+  const rows = Array.isArray(attention?.rows) ? attention.rows : [];
+  if (!rows.length) {
+    els.portfolioRfAttentionMeta.textContent = "-";
+    els.portfolioRfAttentionStatus.textContent = "Chưa có danh sách RF trong snapshot local.";
+    els.portfolioRfMetrics.innerHTML = '<div class="empty">Chưa có thống kê RF.</div>';
+    els.portfolioRfAttentionTable.innerHTML = '<tr><td colspan="12" class="emptyCell">Chưa có dữ liệu.</td></tr>';
+    return;
+  }
+
+  const selectedCount = Number(attention.selected_count) || rows.length;
+  const eligibleCount = Number(attention.eligible_count);
+  const asOf = attention.as_of ? formatDateOnly(attention.as_of) : "-";
+  const from = attention.lookback_from ? formatDateOnly(attention.lookback_from) : null;
+  const metrics = attention.metrics || {};
+  const percent = (value) => Number.isFinite(Number(value)) ? formatPercent(Number(value) * 100) : "-";
+  const signedFraction = (value) => Number.isFinite(Number(value))
+    ? formatSignedPercent(Number(value) * 100)
+    : "-";
+  const negativeFraction = (value) => Number.isFinite(Number(value))
+    ? formatSignedPercent(-Math.abs(Number(value)) * 100)
+    : "-";
+
+  els.portfolioRfAttentionMeta.textContent = Number.isFinite(eligibleCount)
+    ? `${selectedCount}/${eligibleCount} mã đủ điều kiện`
+    : `${selectedCount} mã`;
+  els.portfolioRfAttentionStatus.textContent = `${attention.source || "RF Stock MTF"} · ${attention.variant || "walk-forward"} · rebalance ${asOf}${from ? ` · mẫu đánh giá ${from} → ${asOf}` : ""}.`;
+  els.portfolioRfMetrics.innerHTML = [
+    { label: "CAGR RF", value: percent(metrics.cagr) },
+    { label: "Max DD RF", value: percent(metrics.max_drawdown) },
+    { label: "Sharpe RF", value: formatRatio(metrics.sharpe) },
+    { label: "Exposure TB", value: percent(metrics.average_exposure) },
+    { label: "Chu kỳ đóng", value: Number.isFinite(Number(metrics.completed_cycles)) ? String(metrics.completed_cycles) : "-" },
+    { label: "Tỷ lệ thắng", value: percent(metrics.win_rate) },
+  ].map((item) => `<article><span>${escapeHtml(item.label)}</span><strong>${item.value}</strong></article>`).join("");
+  els.portfolioRfAttentionTable.innerHTML = rows
+    .slice()
+    .sort((left, right) => Number(left.rank || Infinity) - Number(right.rank || Infinity))
+    .map((row) => {
+      const ticker = row.ticker || String(row.symbol || "").split(":").pop() || "-";
+      const status = row.status === "new" ? "Mới vào" : "Giữ lại";
+      const statusClass = row.status === "new" ? "confirmedTicker" : "";
+      return `<tr>
+        <td><strong>${escapeHtml(ticker)}</strong></td>
+        <td>${Number.isFinite(Number(row.rank)) ? `#${Number(row.rank)}` : "-"}</td>
+        <td>${escapeHtml(row.tier || "-")}</td>
+        <td>${Number.isFinite(Number(row.score)) ? Number(row.score).toFixed(1) : "-"}</td>
+        <td>${signedFraction(row.rs)}</td>
+        <td>${Number.isFinite(Number(row.closed_cycles)) ? Number(row.closed_cycles) : "-"}</td>
+        <td>${signedFraction(row.total_return)}</td>
+        <td>${formatRatio(row.profit_factor)}</td>
+        <td>${percent(row.win_rate)}</td>
+        <td>${negativeFraction(row.drawdown_proxy)}</td>
+        <td>${negativeFraction(row.worst_leg_drawdown)}</td>
         <td><span class="${statusClass}">${status}</span></td>
       </tr>`;
     }).join("");

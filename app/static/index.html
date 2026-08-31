@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RF + EMA Portfolio Gate</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/styles.css?v=20260831-rebalance-watchlist" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260831-rf-watchlist" />
   </head>
   <body>
     <div id="loginScreen" class="loginScreen">
@@ -790,6 +790,38 @@
               </table>
             </div>
           </div>
+          <div class="portfolioAttentionPanel">
+            <div class="panelHead compactHead">
+              <div>
+                <p class="eyebrow">Danh sách chú ý sau rebalance</p>
+                <h2>RF Stock MTF · 60 phút</h2>
+              </div>
+              <span id="portfolioRfAttentionMeta">-</span>
+            </div>
+            <div id="portfolioRfMetrics" class="portfolioMetrics portfolioRfMetrics"></div>
+            <p id="portfolioRfAttentionStatus" class="portfolioMonitorNote">Chưa có danh sách RF trong snapshot local.</p>
+            <div class="tableWrap portfolioAttentionTableWrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Mã</th>
+                    <th>Hạng</th>
+                    <th>Tier</th>
+                    <th>Điểm RF</th>
+                    <th>RS</th>
+                    <th>Chu kỳ đóng</th>
+                    <th>L/L ròng</th>
+                    <th>PF</th>
+                    <th>Tỷ lệ thắng</th>
+                    <th>DD proxy</th>
+                    <th>Worst-leg DD</th>
+                    <th>Trạng thái</th>
+                  </tr>
+                </thead>
+                <tbody id="portfolioRfAttentionTable"></tbody>
+              </table>
+            </div>
+          </div>
           <p id="portfolioBacktestLimitations" class="portfolioMonitorFootnote">Chạy local và gửi snapshot để làm chuẩn đánh giá. Không phải lệnh giao dịch tự động.</p>
         </section>
       </div>
@@ -1316,6 +1348,6 @@
     </div>
 
     <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
-    <script src="/static/app.js?v=20260831-rebalance-watchlist"></script>
+    <script src="/static/app.js?v=20260831-rf-watchlist"></script>
   </body>
 </html>
