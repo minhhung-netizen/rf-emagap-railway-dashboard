@@ -59,6 +59,7 @@ const els = {
   openPositionsTotalReturn: document.querySelector("#openPositionsTotalReturn"),
   openPositionTickerFilter: document.querySelector("#openPositionTickerFilter"),
   openPositionStrategyFilter: document.querySelector("#openPositionStrategyFilter"),
+  openPositionSectorFilter: document.querySelector("#openPositionSectorFilter"),
   openPositionConfirmFilter: document.querySelector("#openPositionConfirmFilter"),
   openPositionSort: document.querySelector("#openPositionSort"),
   performanceTickerFilter: document.querySelector("#performanceTickerFilter"),
@@ -2748,6 +2749,7 @@ function applyTranslations() {
   els.refresh.title = t("refresh");
   els.openPositionTickerFilter.placeholder = t("openPositionTickerPlaceholder");
   updateOpenPositionStrategyFilterOptions(state.openTrades);
+  updateOpenPositionSectorFilterOptions(state.openTrades);
   els.performanceTickerFilter.placeholder = t("performanceTickerPlaceholder");
   els.backtestTickerSearch.placeholder = t("backtestSearchPlaceholder");
   updatePerformanceStrategyFilterOptions([...state.performanceStrategies, ...state.backtestStats]);
@@ -3185,8 +3187,11 @@ async function refresh() {
   renderSignals();
   state.portfolioBacktest = portfolioBacktestPayload.backtest || null;
   state.portfolioGate = portfolioGatePayload;
+  state.sectors = sectorPayload.sectors || [];
+  state.sectorNames = sectorPayload.sector_names || [];
   state.openTrades = positionPayload.open_trades || [];
   updateOpenPositionStrategyFilterOptions(filterTradesForWatchlist(state.openTrades));
+  updateOpenPositionSectorFilterOptions(filterTradesForWatchlist(state.openTrades));
   renderOpenPositions();
   state.closedTrades = positionPayload.closed_trades || [];
   state.performanceStrategies = performancePayload.strategies || [];
@@ -3214,8 +3219,6 @@ async function refresh() {
   renderPortfolioGate(state.portfolioGate);
   state.dividendEvents = dividendPayload.dividend_events || [];
   state.dividendAlerts = dividendPayload.dividend_alerts || [];
-  state.sectors = sectorPayload.sectors || [];
-  state.sectorNames = sectorPayload.sector_names || [];
   renderDividendEvents();
   renderSectorMappings();
   renderExDateAlerts();
@@ -3993,6 +3996,17 @@ function updateOpenPositionStrategyFilterOptions(openTrades) {
   els.openPositionStrategyFilter.value = strategies.includes(currentValue) ? currentValue : "";
 }
 
+function updateOpenPositionSectorFilterOptions(openTrades) {
+  const currentValue = els.openPositionSectorFilter.value;
+  const sectors = [...new Set(
+    (openTrades || []).map((trade) => sectorForTicker(trade.ticker)).filter(Boolean)
+  )].sort((left, right) => left.localeCompare(right));
+  els.openPositionSectorFilter.replaceChildren();
+  els.openPositionSectorFilter.append(new Option(state.language === "vi" ? "Tất cả ngành" : "All sectors", ""));
+  sectors.forEach((sector) => els.openPositionSectorFilter.append(new Option(sector, sector)));
+  els.openPositionSectorFilter.value = sectors.includes(currentValue) ? currentValue : "";
+}
+
 function updatePerformanceStrategyFilterOptions(strategyRows) {
   const currentValue = els.performanceStrategyFilter.value;
   const strategies = uniqueStrategyNames(strategyRows);
@@ -4511,17 +4525,19 @@ function sortPerformance(strategies) {
 function filterOpenPositions(openTrades) {
   const tickerFilter = els.openPositionTickerFilter.value.trim().toUpperCase();
   const strategyFilter = els.openPositionStrategyFilter.value.trim();
+  const sectorFilter = els.openPositionSectorFilter.value.trim().toLowerCase();
   const confirmFilter = els.openPositionConfirmFilter.value;
   return filterTradesForWatchlist(openTrades).filter((trade) => {
     const ticker = String(trade.ticker || "").toUpperCase();
     const tickerMatches = !tickerFilter || ticker.includes(tickerFilter);
     const strategyMatches =
       !strategyFilter || String(trade.strategy || "") === strategyFilter;
+    const sectorMatches = !sectorFilter || sectorForTicker(trade.ticker).toLowerCase() === sectorFilter;
     const confirmMatches =
       confirmFilter === "all" ||
       (confirmFilter === "confirmed" && trade.has_confirm_buy) ||
       (confirmFilter === "unconfirmed" && !trade.has_confirm_buy);
-    return tickerMatches && strategyMatches && confirmMatches;
+    return tickerMatches && strategyMatches && sectorMatches && confirmMatches;
   });
 }
 
@@ -6250,6 +6266,7 @@ els.recentTradeBannerToggle.addEventListener("click", () => {
 els.addTickerToWatchlist.addEventListener("click", addSelectedTickerToWatchlist);
 els.openPositionTickerFilter.addEventListener("input", renderOpenPositions);
 els.openPositionStrategyFilter.addEventListener("change", renderOpenPositions);
+els.openPositionSectorFilter.addEventListener("change", renderOpenPositions);
 els.openPositionConfirmFilter.addEventListener("change", renderOpenPositions);
 els.openPositionSort.addEventListener("change", renderOpenPositions);
 els.openPositionRefreshPrices.addEventListener("click", refreshOpenPositionMarketPrices);
