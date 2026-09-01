@@ -311,6 +311,7 @@ class SignalStore:
         with self.connect() as conn:
             conn.execute("PRAGMA foreign_keys = ON")
             conn.executescript(SCHEMA)
+            self._ensure_signal_columns(conn)
             self._ensure_dividend_event_columns(conn)
             self._ensure_strategy_backtest_stat_columns(conn)
             self._ensure_user_columns(conn)
@@ -334,6 +335,15 @@ class SignalStore:
                 """
             )
             self._normalize_signal_actions(conn)
+
+    def _ensure_signal_columns(self, conn: sqlite3.Connection) -> None:
+        """Bring older signal ledgers forward without discarding their history."""
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(signals)").fetchall()
+        }
+        if "price" not in columns:
+            conn.execute("ALTER TABLE signals ADD COLUMN price REAL")
 
     def _ensure_dividend_event_columns(self, conn: sqlite3.Connection) -> None:
         columns = {
