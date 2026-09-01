@@ -391,8 +391,14 @@ class SignalStore:
             row["name"]
             for row in conn.execute("PRAGMA table_info(users)").fetchall()
         }
+        if "role" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+        if "features_json" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN features_json TEXT NOT NULL DEFAULT '[]'")
         if "strategies_json" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN strategies_json TEXT NOT NULL DEFAULT '[]'")
+        if "active" not in columns:
+            conn.execute("ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
 
     def _ensure_sector_mapping_columns(self, conn: sqlite3.Connection) -> None:
         columns = {
