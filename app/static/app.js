@@ -178,6 +178,17 @@ const els = {
   portfolioGateRf: document.querySelector("#portfolioGateRf"),
   portfolioGateEma: document.querySelector("#portfolioGateEma"),
   portfolioGatePolicy: document.querySelector("#portfolioGatePolicy"),
+  workflowScheduleStatus: document.querySelector("#workflowScheduleStatus"),
+  workflowScheduleList: document.querySelector("#workflowScheduleList"),
+  workflowTestReminder: document.querySelector("#workflowTestReminder"),
+  rebalanceReminderModal: document.querySelector("#rebalanceReminderModal"),
+  rebalanceReminderTitle: document.querySelector("#rebalanceReminderTitle"),
+  rebalanceReminderSubtitle: document.querySelector("#rebalanceReminderSubtitle"),
+  rebalanceReminderBody: document.querySelector("#rebalanceReminderBody"),
+  rebalanceReminderClose: document.querySelector("#rebalanceReminderClose"),
+  rebalanceReminderWorkflow: document.querySelector("#rebalanceReminderWorkflow"),
+  rebalanceReminderTomorrow: document.querySelector("#rebalanceReminderTomorrow"),
+  rebalanceReminderSeen: document.querySelector("#rebalanceReminderSeen"),
   languageSelect: document.querySelector("#languageSelect"),
   themeToggle: document.querySelector("#themeToggle"),
   tabButtons: document.querySelectorAll("[data-tab-target]"),
@@ -251,6 +262,7 @@ const KELLY_STORAGE_KEY = "dashboardKellyInputs";
 const KELLY_LIST_STORAGE_KEY = "dashboardKellyEntries";
 const DCA_RISK_LIMIT_STORAGE_KEY = "dashboardDcaRiskLimitPct";
 const DEFAULT_DCA_RISK_LIMIT_PCT = 1.5;
+const REBALANCE_REMINDER_STORAGE_KEY = "portfolioRebalanceReminder";
 const DEFAULT_KELLY_INPUTS = {
   ticker: "",
   strategy: "",
@@ -1406,6 +1418,8 @@ const state = {
   derivatives: { summary: {}, open_positions: [], closed_trades: [], events: [] },
   portfolioBacktest: null,
   portfolioGate: null,
+  rebalanceSchedule: [],
+  rebalanceReminderShownFor: "",
 };
 
 const priceChartState = {
@@ -2961,12 +2975,20 @@ function applyAccessControl() {
   const isAdmin = state.user?.role === "admin";
   document.querySelectorAll("[data-tab-target]").forEach((button) => {
     const target = button.dataset.tabTarget;
-    const visible = target === "admin" ? isAdmin : isAdmin || allowed.has(target);
+    const visible = target === "admin"
+      ? isAdmin
+      : target === "workflow"
+        ? isAdmin || allowed.has("portfolioMonitor")
+        : isAdmin || allowed.has(target);
     button.dataset.accessHidden = visible ? "false" : "true";
   });
   document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
     const target = panel.dataset.tabPanel;
-    const visible = target === "admin" ? isAdmin : isAdmin || allowed.has(target);
+    const visible = target === "admin"
+      ? isAdmin
+      : target === "workflow"
+        ? isAdmin || allowed.has("portfolioMonitor")
+        : isAdmin || allowed.has(target);
     panel.dataset.accessHidden = visible ? "false" : "true";
   });
   [
@@ -3243,6 +3265,8 @@ async function refresh() {
   ];
   renderInvalidSignals(state.invalidSignals);
   renderPortfolioBacktest(state.portfolioBacktest);
+  renderRebalanceWorkflow(state.portfolioBacktest);
+  showRebalanceReminderIfNeeded();
   renderPortfolioGate(state.portfolioGate);
   state.dividendEvents = dividendPayload.dividend_events || [];
   state.dividendAlerts = dividendPayload.dividend_alerts || [];
@@ -3329,6 +3353,172 @@ function renderPortfolioBacktest(report) {
   const attentionLists = summary.attention_lists || {};
   renderPortfolioAttentionList(attentionLists.ema || summary.attention_list);
   renderPortfolioRfAttentionList(attentionLists.rf);
+}
+
+function asLocalDay(value) {
+  const text = String(value || "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const date = new Date(`${text}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function dayToIso(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addCalendarMonths(value, months) {
+  const date = asLocalDay(value);
+  if (!date) return "";
+  const originalDay = date.getDate();
+  date.setDate(1);
+  date.setMonth(date.getMonth() + months);
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  date.setDate(Math.min(originalDay, lastDay));
+  return dayToIso(date);
+}
+
+function daysUntil(value) {
+  const due = asLocalDay(value);
+  if (!due) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((due.getTime() - today.getTime()) / 86400000);
+}
+
+function scheduleStatusText(days) {
+  if (!Number.isFinite(days)) return "Chưa xác định";
+  if (days < 0) return `Quá hạn ${Math.abs(days)} ngày`;
+  if (days === 0) return "Đến hạn hôm nay";
+  if (days === 1) return "Còn 1 ngày";
+  return `Còn ${days} ngày`;
+}
+
+function buildRebalanceSchedule(report) {
+  const attention = report?.summary?.attention_lists || {};
+  const definitions = [
+    {
+      key: "rf",
+      sleeve: "RF Stock MTF · 60 phút",
+      cadence: "3 tháng",
+      months: 3,
+      source: attention.rf,
+      action: "Quét toàn bộ universe RF, chạy walk-forward và xuất snapshot mới.",
+    },
+    {
+      key: "ema",
+      sleeve: "EMA Gap Daily",
+      cadence: "6 tháng",
+      months: 6,
+      source: attention.ema || report?.summary?.attention_list,
+      action: "Làm mới dữ liệu Daily, xếp hạng lại và chạy chu kỳ EMA Gap.",
+    },
+  ];
+
+  return definitions
+    .map((item) => {
+      const source = item.source || {};
+      const lastRebalance = String(source.as_of || source.rebalance_date || "").slice(0, 10);
+      const explicitDue = String(
+        source.next_rebalance_date || source.next_rebalance_at || source.next_rebalance || ""
+      ).slice(0, 10);
+      const dueDate = asLocalDay(explicitDue)
+        ? explicitDue
+        : addCalendarMonths(lastRebalance, item.months);
+      return {
+        ...item,
+        lastRebalance,
+        dueDate,
+        days: daysUntil(dueDate),
+      };
+    })
+    .filter((item) => item.lastRebalance && item.dueDate)
+    .sort((left, right) => String(left.dueDate).localeCompare(String(right.dueDate)));
+}
+
+function renderRebalanceWorkflow(report) {
+  if (!els.workflowScheduleList || !els.workflowScheduleStatus) return;
+  const schedule = buildRebalanceSchedule(report);
+  state.rebalanceSchedule = schedule;
+
+  if (!schedule.length) {
+    els.workflowScheduleStatus.textContent = "Chưa có snapshot đủ ngày rebalance.";
+    els.workflowScheduleList.innerHTML = '<div class="workflowEmpty">Gửi snapshot backtest từ local để dashboard tự tạo lịch RF và EMA.</div>';
+    return;
+  }
+
+  const urgent = schedule.filter((item) => Number.isFinite(item.days) && item.days <= 7);
+  els.workflowScheduleStatus.textContent = urgent.length
+    ? `${urgent.length} kỳ cần chú ý`
+    : "Lịch được tạo từ snapshot mới nhất";
+  els.workflowScheduleList.innerHTML = schedule.map((item) => {
+    const tone = item.days < 0 ? "overdue" : item.days <= 7 ? "dueSoon" : "planned";
+    return `<article class="workflowScheduleItem ${tone}">
+      <div>
+        <strong>${escapeHtml(item.sleeve)}</strong>
+        <span>Chu kỳ ${escapeHtml(item.cadence)} · kỳ trước ${escapeHtml(formatDateOnly(item.lastRebalance))}</span>
+      </div>
+      <div class="workflowScheduleDue">
+        <strong>${escapeHtml(formatDateOnly(item.dueDate))}</strong>
+        <span>${escapeHtml(scheduleStatusText(item.days))}</span>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+function loadRebalanceReminderPreference() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(REBALANCE_REMINDER_STORAGE_KEY) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function postponeRebalanceReminder(days) {
+  const until = new Date();
+  until.setHours(0, 0, 0, 0);
+  until.setDate(until.getDate() + days);
+  localStorage.setItem(REBALANCE_REMINDER_STORAGE_KEY, JSON.stringify({ mute_until: dayToIso(until) }));
+  els.rebalanceReminderModal.hidden = true;
+}
+
+function showRebalanceReminder(schedule, preview = false) {
+  if (!els.rebalanceReminderModal) return;
+  const upcoming = preview
+    ? schedule
+    : schedule.filter((item) => Number.isFinite(item.days) && item.days <= 7);
+  if (!upcoming.length) return;
+
+  els.rebalanceReminderTitle.textContent = preview
+    ? "Bản xem trước nhắc tái cơ cấu"
+    : upcoming.some((item) => item.days < 0)
+      ? "Có kỳ tái cơ cấu đã quá hạn"
+      : "Sắp đến lịch kiểm tra danh mục";
+  els.rebalanceReminderSubtitle.textContent = preview
+    ? "Popup thực tế chỉ hiện từ 7 ngày trước hạn."
+    : "Hãy cập nhật dữ liệu local, kiểm tra kết quả walk-forward và chốt danh sách trước khi thực hiện.";
+  els.rebalanceReminderBody.innerHTML = upcoming.map((item) => `
+    <article class="rebalanceReminderItem">
+      <strong>${escapeHtml(item.sleeve)}</strong>
+      <span>${escapeHtml(formatDateOnly(item.dueDate))} · ${escapeHtml(scheduleStatusText(item.days))}</span>
+      <p>${escapeHtml(item.action)}</p>
+    </article>
+  `).join("");
+  els.rebalanceReminderModal.hidden = false;
+}
+
+function showRebalanceReminderIfNeeded() {
+  const urgent = state.rebalanceSchedule.filter((item) => Number.isFinite(item.days) && item.days <= 7);
+  if (!urgent.length) return;
+  const today = dayToIso(new Date());
+  const preference = loadRebalanceReminderPreference();
+  const reminderKey = urgent.map((item) => `${item.key}:${item.dueDate}`).join("|");
+  if (state.rebalanceReminderShownFor === reminderKey || String(preference.mute_until || "") >= today) return;
+  state.rebalanceReminderShownFor = reminderKey;
+  window.setTimeout(() => showRebalanceReminder(urgent), 450);
 }
 
 function renderPortfolioAttentionList(attention) {
@@ -6606,6 +6796,17 @@ els.dcaPlanCloseBottom.addEventListener("click", closeDcaPlanDetail);
 els.dcaPlanModal.addEventListener("click", (event) => {
   if (event.target === els.dcaPlanModal) closeDcaPlanDetail();
 });
+els.workflowTestReminder?.addEventListener("click", () => showRebalanceReminder(state.rebalanceSchedule, true));
+els.rebalanceReminderClose?.addEventListener("click", () => postponeRebalanceReminder(0));
+els.rebalanceReminderSeen?.addEventListener("click", () => postponeRebalanceReminder(0));
+els.rebalanceReminderTomorrow?.addEventListener("click", () => postponeRebalanceReminder(1));
+els.rebalanceReminderWorkflow?.addEventListener("click", () => {
+  postponeRebalanceReminder(0);
+  setActiveTab("workflow");
+});
+els.rebalanceReminderModal?.addEventListener("click", (event) => {
+  if (event.target === els.rebalanceReminderModal) postponeRebalanceReminder(0);
+});
 els.clearClosedTradesFilter.addEventListener("click", clearClosedTradeFilter);
 els.manualPositionForm.addEventListener("submit", addManualPosition);
 els.manualRefreshPrices.addEventListener("click", refreshManualMarketPrices);
@@ -6632,6 +6833,9 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !els.dcaPlanModal.hidden) {
     closeDcaPlanDetail();
   }
+  if (event.key === "Escape" && !els.rebalanceReminderModal.hidden) {
+    postponeRebalanceReminder(0);
+  }
 });
 
 applyTheme();
@@ -6641,3 +6845,4 @@ applyTranslations();
 updateWatchlistControls();
 bootstrapAuth();
 setInterval(refresh, 15000);
+setInterval(showRebalanceReminderIfNeeded, 6 * 60 * 60 * 1000);

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RF + EMA Portfolio Gate</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/styles.css?v=20260831-rf-watchlist" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260901-rebalance-workflow" />
   </head>
   <body>
     <div id="loginScreen" class="loginScreen">
@@ -61,6 +61,7 @@
         <button class="tabButton" type="button" data-tab-target="positions" data-i18n="tabPositions">Positions</button>
         <button class="tabButton" type="button" data-tab-target="performance" data-i18n="tabPerformance">Performance</button>
         <button class="tabButton" type="button" data-tab-target="portfolioMonitor">RF + EMA Monitor</button>
+        <button class="tabButton" type="button" data-tab-target="workflow">Quy trình vận hành</button>
         <button class="tabButton" type="button" data-tab-target="dividends" data-i18n="tabDividends">Dividends</button>
         <button class="tabButton" type="button" data-tab-target="logs" data-i18n="tabLogs">Logs</button>
         <button class="tabButton" type="button" data-tab-target="admin">Quản trị</button>
@@ -826,6 +827,105 @@
         </section>
       </div>
 
+      <div class="tabPanel" data-tab-panel="workflow">
+        <section class="workflowPanel">
+          <div class="panelHead">
+            <div>
+              <p class="eyebrow">Quy trình chuẩn</p>
+              <h2>Vận hành RF + EMA Portfolio Gate</h2>
+              <p class="panelNote">Dashboard phân loại và kiểm soát tín hiệu; quyết định đặt lệnh vẫn do bạn xác nhận.</p>
+            </div>
+            <button id="workflowTestReminder" class="smallButton" type="button">Thử popup nhắc lịch</button>
+          </div>
+
+          <section class="workflowSchedule" aria-label="Lịch tái cơ cấu">
+            <div class="workflowScheduleHead">
+              <div>
+                <p class="eyebrow">Lịch tái cơ cấu</p>
+                <h3>Ngày cần chuẩn bị</h3>
+              </div>
+              <span id="workflowScheduleStatus" class="mutedText">Chờ tải snapshot backtest.</span>
+            </div>
+            <div id="workflowScheduleList" class="workflowScheduleList"></div>
+            <p class="workflowFootnote">Popup xuất hiện khi dashboard đang mở và còn 7 ngày, hoặc đã đến hạn. Lịch dùng ngày rebalance mới nhất trong snapshot local.</p>
+          </section>
+
+          <section class="workflowSteps">
+            <article class="workflowStep">
+              <span class="workflowNumber">01</span>
+              <div>
+                <p class="eyebrow">Mỗi ngày giao dịch</p>
+                <h3>Nhận và kiểm tra tín hiệu</h3>
+                <p>TradingView gửi alert vào webhook. Dashboard xác định sleeve RF/EMA, chuẩn hóa mã, đối chiếu ngành, giới hạn exposure và ghi rõ lý do khi tín hiệu bị loại.</p>
+                <ol>
+                  <li>Kiểm tra tab Tổng quan và Vị thế sau phiên.</li>
+                  <li>Ưu tiên tín hiệu “được nhận”; xem Nhật ký để hiểu tín hiệu bị chặn.</li>
+                  <li>Chỉ đặt lệnh sau khi xác nhận thanh khoản và giá thực tế.</li>
+                </ol>
+              </div>
+            </article>
+            <article class="workflowStep">
+              <span class="workflowNumber">02</span>
+              <div>
+                <p class="eyebrow">Hàng tuần</p>
+                <h3>Kiểm soát rủi ro danh mục</h3>
+                <p>Đối chiếu số vị thế, exposure tổng và tỷ trọng từng ngành ở tab RF + EMA Monitor. Không tăng tỷ trọng chỉ vì một tín hiệu lặp lại.</p>
+                <ol>
+                  <li>Rà vị thế đã đóng, vị thế cần chú ý và cổ tức sắp chốt quyền.</li>
+                  <li>Kiểm tra mã/ngành nào đang sát trần phân bổ.</li>
+                  <li>Ghi lại mọi ngoại lệ thực hiện để so sánh với backtest.</li>
+                </ol>
+              </div>
+            </article>
+            <article class="workflowStep">
+              <span class="workflowNumber">03</span>
+              <div>
+                <p class="eyebrow">RF · mỗi 3 tháng</p>
+                <h3>Cập nhật RF Stock MTF 60 phút</h3>
+                <p>Chạy lại toàn bộ alert universe trên TradingView với đúng profile RF Stock MTF và khung 60 phút. Sau đó thực hiện walk-forward, kiểm tra chi phí giao dịch và xuất snapshot mới.</p>
+                <div class="workflowCommand">npm.cmd run rf:run</div>
+                <div class="workflowCommand">npm.cmd run rf:research</div>
+              </div>
+            </article>
+            <article class="workflowStep">
+              <span class="workflowNumber">04</span>
+              <div>
+                <p class="eyebrow">EMA Gap · mỗi 6 tháng</p>
+                <h3>Làm mới dữ liệu Daily và tái xếp hạng</h3>
+                <p>Đồng bộ dữ liệu TradingView, kiểm tra đủ lịch sử, sau đó chạy chu kỳ EMA. Chu kỳ chỉ tái cơ cấu khi đã đến hạn; lịch sử và audit được lưu lại để so sánh.</p>
+                <div class="workflowCommand">npm.cmd run emagap:refresh</div>
+                <div class="workflowCommand">npm.cmd run emagap:cycle</div>
+                <div class="workflowCommand">npm.cmd run emagap:status</div>
+              </div>
+            </article>
+            <article class="workflowStep">
+              <span class="workflowNumber">05</span>
+              <div>
+                <p class="eyebrow">Trước khi thực hiện</p>
+                <h3>Chốt danh sách rebalance</h3>
+                <p>Đọc danh sách chú ý EMA và RF trong tab Monitor. Mã “Mới vào” là ứng viên thêm; “Giữ lại” tiếp tục nắm giữ. Kiểm tra lại trần ngành, trần mã, exposure và tỷ trọng sleeve trước khi gửi lệnh.</p>
+                <ol>
+                  <li>Không dùng một kết quả backtest đơn lẻ làm quyết định.</li>
+                  <li>Thực hiện theo tỷ trọng đã duyệt, ưu tiên giá thanh khoản tốt.</li>
+                  <li>Không tự động hóa đặt lệnh từ dashboard.</li>
+                </ol>
+              </div>
+            </article>
+            <article class="workflowStep">
+              <span class="workflowNumber">06</span>
+              <div>
+                <p class="eyebrow">Sau khi kiểm tra</p>
+                <h3>Xuất và công bố snapshot</h3>
+                <p>Sau khi kiểm tra số liệu, ghép hai sleeve, xuất dữ liệu và gửi lên dashboard. Snapshot mới trở thành chuẩn cho cổng tín hiệu và lịch nhắc kỳ tiếp theo.</p>
+                <div class="workflowCommand">npm.cmd run rf:emagap:combined</div>
+                <div class="workflowCommand">npm.cmd run rf:dashboard:export</div>
+                <div class="workflowCommand">npm.cmd run rf:dashboard:publish</div>
+              </div>
+            </article>
+          </section>
+        </section>
+      </div>
+
       <div class="tabPanel" data-tab-panel="kelly">
         <section class="kellyPanel">
           <div class="panelHead">
@@ -1347,7 +1447,26 @@
       </section>
     </div>
 
+    <div id="rebalanceReminderModal" class="modalOverlay" hidden>
+      <section class="modalPanel reminderModalPanel" role="dialog" aria-modal="true" aria-labelledby="rebalanceReminderTitle">
+        <div class="modalHead">
+          <div>
+            <p class="eyebrow">Nhắc tái cơ cấu</p>
+            <h2 id="rebalanceReminderTitle">Đến lịch kiểm tra danh mục</h2>
+            <span id="rebalanceReminderSubtitle" class="mutedText"></span>
+          </div>
+          <button id="rebalanceReminderClose" class="iconButton" type="button" aria-label="Đóng">×</button>
+        </div>
+        <div id="rebalanceReminderBody" class="rebalanceReminderBody"></div>
+        <div class="modalActions">
+          <button id="rebalanceReminderWorkflow" class="smallButton" type="button">Mở quy trình</button>
+          <button id="rebalanceReminderTomorrow" class="smallButton ghostButton" type="button">Nhắc lại ngày mai</button>
+          <button id="rebalanceReminderSeen" class="smallButton ghostButton" type="button">Đã xem hôm nay</button>
+        </div>
+      </section>
+    </div>
+
     <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
-    <script src="/static/app.js?v=20260831-rf-watchlist"></script>
+    <script src="/static/app.js?v=20260901-rebalance-workflow"></script>
   </body>
 </html>
