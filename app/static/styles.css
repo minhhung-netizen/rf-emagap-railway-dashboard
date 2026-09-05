@@ -1386,6 +1386,47 @@ main {
   white-space: nowrap;
 }
 
+.rebalanceBadge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+.rebalanceBadge.included {
+  background: rgba(46, 204, 113, 0.16);
+  color: #55d78b;
+}
+
+.rebalanceBadge.outside {
+  background: rgba(245, 166, 35, 0.16);
+  color: #f6bd63;
+}
+
+.rebalanceBadge.neutral {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--muted);
+}
+
+.rebalanceDetail {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-left: 5px;
+  white-space: nowrap;
+}
+
+.positionCardRebalance {
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 10px;
+  padding-top: 9px;
+}
+
 .portfolioGateStatus {
   border-top: 1px solid var(--line-soft);
 }

@@ -3633,6 +3633,51 @@ function renderPortfolioRfAttentionList(attention) {
     }).join("");
 }
 
+function rebalanceTicker(value) {
+  return String(value || "").trim().toUpperCase().split(":").pop();
+}
+
+function rebalanceRecommendationForTicker(ticker) {
+  const summary = state.portfolioBacktest?.summary || {};
+  const lists = summary.attention_lists || {};
+  const candidates = [
+    { sleeve: "RF", attention: lists.rf },
+    { sleeve: "EMA", attention: lists.ema || summary.attention_list },
+  ].filter(({ attention }) => attention && Array.isArray(attention.rows));
+  const target = rebalanceTicker(ticker);
+  const matches = candidates.flatMap(({ sleeve, attention }) => attention.rows
+    .filter((row) => rebalanceTicker(row.ticker || row.symbol) === target)
+    .map((row) => ({ sleeve, attention, row })));
+  return { hasSnapshot: candidates.length > 0, matches };
+}
+
+function rebalanceRankLabel(ticker) {
+  const comparison = rebalanceRecommendationForTicker(ticker);
+  if (!comparison.hasSnapshot) return "-";
+  if (!comparison.matches.length) return "Ngoài top";
+  return comparison.matches.map(({ sleeve, row }) => {
+    const rank = Number.isFinite(Number(row.rank)) ? `#${Number(row.rank)}` : "#-";
+    return `${sleeve} ${rank}`;
+  }).join(" · ");
+}
+
+function renderRebalanceRecommendation(ticker) {
+  const comparison = rebalanceRecommendationForTicker(ticker);
+  if (!comparison.hasSnapshot) {
+    return '<span class="rebalanceBadge neutral">Chưa có snapshot</span>';
+  }
+  if (!comparison.matches.length) {
+    return '<span class="rebalanceBadge outside">Ngoài danh mục khuyến nghị</span>';
+  }
+  return comparison.matches.map(({ sleeve, attention, row }) => {
+    const isNew = String(row.status || "").toLowerCase() === "new";
+    const action = isNew ? "Mới vào" : "Giữ lại";
+    const tier = row.tier ? ` · Tier ${row.tier}` : "";
+    const asOf = attention.as_of ? ` · kỳ ${formatDateOnly(attention.as_of)}` : "";
+    return `<span class="rebalanceBadge included">Trong danh mục</span><span class="rebalanceDetail">${escapeHtml(`${sleeve}: ${action}${tier}${asOf}`)}</span>`;
+  }).join("<br>");
+}
+
 function renderPortfolioGate(gate) {
   const placeholder = "-";
   const current = gate?.state || {};
@@ -5037,7 +5082,7 @@ function renderOpenPositions() {
   const openTrades = sortOpenPositions(filterOpenPositions(state.openTrades));
   renderOpenPositionsTotalReturn(openTrades);
   if (!openTrades.length) {
-    els.openPositionsTable.innerHTML = `<tr><td class="empty" colspan="14">${t("noOpenPositions")}</td></tr>`;
+    els.openPositionsTable.innerHTML = `<tr><td class="empty" colspan="16">${t("noOpenPositions")}</td></tr>`;
     els.openPositionCards.innerHTML = `<div class="empty">${t("noOpenPositions")}</div>`;
     return;
   }
@@ -5055,6 +5100,8 @@ function renderOpenPositions() {
         <td><strong class="${tickerClass}" title="${escapeHtml(confirmTitle)}">${escapeHtml(trade.ticker)}</strong></td>
         <td><strong>${escapeHtml(displayStrategyName(trade.strategy))}</strong></td>
         <td>${escapeHtml(sectorForTicker(trade.ticker) || "-")}</td>
+        <td>${escapeHtml(rebalanceRankLabel(trade.ticker))}</td>
+        <td>${renderRebalanceRecommendation(trade.ticker)}</td>
         <td>${escapeHtml(trade.timeframe || "-")}</td>
         <td>${formatPrice(trade.entry_price)}</td>
         <td>${formatPrice(trade.exit_price)}</td>
@@ -5105,8 +5152,10 @@ function renderOpenPositions() {
           <div><span>${escapeHtml(t("currentShort"))}</span><strong>${formatPrice(trade.exit_price)}</strong></div>
           <div><span>${escapeHtml(t("allocationWeight"))}</span><strong>${formatKellyPercent(weightPct)}</strong></div>
           <div><span>${escapeHtml(t("portfolioPl"))}</span><strong>${formatSignedPercent(allocatedPl)}</strong></div>
+          <div><span>Hạng rebalance</span><strong>${escapeHtml(rebalanceRankLabel(trade.ticker))}</strong></div>
           <div><span>${escapeHtml(t("daysShort"))}</span><strong>${formatHoldingDaysBetween(trade.entry_time)}</strong></div>
         </div>
+        <div class="positionCardRebalance">${renderRebalanceRecommendation(trade.ticker)}</div>
         <div class="positionCardSignal">
           ${signals.length
             ? `<span class="confirmBadge">${escapeHtml(t("confirmedStatus"))}</span>`
