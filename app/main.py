@@ -139,6 +139,10 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(signal_enrichment_worker()),
         asyncio.create_task(price_refresh_loop()),
+        # Keep manual holdings in sync with market closes.  The price-refresh
+        # loop intentionally excludes manual positions, so this companion task
+        # must remain registered whenever the service starts.
+        asyncio.create_task(manual_portfolio_automation_loop()),
         asyncio.create_task(sector_autofill_loop()),
         asyncio.create_task(dividend_autofetch_loop()),
     ]
