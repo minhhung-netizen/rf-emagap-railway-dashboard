@@ -81,7 +81,17 @@ def portfolio_gate_state(signals: list[dict[str, Any]]) -> dict[str, Any]:
         elif action == "sell":
             positions.pop(key, None)
 
-    rows = list(positions.values())
+    return summarize_portfolio_positions(positions.values())
+
+
+def summarize_portfolio_positions(positions: Any) -> dict[str, Any]:
+    """Summarize a supplied set of already-open gate positions.
+
+    This deliberately has no rebalance dependency: it remains the exposure used
+    to enforce the gate's hard limits, including holdings that a later rebalance
+    has stopped recommending.
+    """
+    rows = list(positions)
     by_ticker: dict[str, float] = defaultdict(float)
     by_sector: dict[str, float] = defaultdict(float)
     by_sleeve: dict[str, float] = defaultdict(float)
@@ -97,6 +107,57 @@ def portfolio_gate_state(signals: list[dict[str, Any]]) -> dict[str, Any]:
         "by_sector_pct": dict(by_sector),
         "by_sleeve_pct": dict(by_sleeve),
     }
+
+
+def rebalance_recommended_state(
+    gate_state: dict[str, Any], backtest: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Open gate positions that appear in the latest rebalance recommendation.
+
+    A ticker can appear in either RF or EMA recommendation list.  The list is a
+    current recommendation, not a record of which sleeve originally opened the
+    position.  Positions outside it remain in ``gate_state`` and still consume
+    hard-limit exposure; they are simply not shown as currently recommended.
+    """
+    summary = (backtest or {}).get("summary") or {}
+    attention_lists = summary.get("attention_lists") or {}
+    candidates = []
+    if isinstance(attention_lists, dict):
+        candidates.extend([attention_lists.get("rf"), attention_lists.get("ema")])
+    candidates.append(summary.get("attention_list"))
+    recommended_tickers = set()
+    has_recommendation = False
+    for attention in candidates:
+        if not isinstance(attention, dict) or not isinstance(attention.get("rows"), list):
+            continue
+        has_recommendation = True
+        for row in attention["rows"]:
+            if not isinstance(row, dict):
+                continue
+            ticker = str(row.get("ticker") or row.get("symbol") or "").strip().upper().split(":")[-1]
+            if ticker:
+                recommended_tickers.add(ticker)
+    if not has_recommendation:
+        return {
+            "available": False,
+            "positions": [],
+            "total_exposure_pct": None,
+            "by_ticker_pct": {},
+            "by_sector_pct": {},
+            "by_sleeve_pct": {},
+            "excluded_positions": list(gate_state.get("positions") or []),
+        }
+    recommended = [
+        position for position in gate_state.get("positions") or []
+        if str(position.get("ticker") or "").upper() in recommended_tickers
+    ]
+    result = summarize_portfolio_positions(recommended)
+    result["available"] = True
+    result["excluded_positions"] = [
+        position for position in gate_state.get("positions") or []
+        if str(position.get("ticker") or "").upper() not in recommended_tickers
+    ]
+    return result
 
 
 def evaluate_portfolio_signal(

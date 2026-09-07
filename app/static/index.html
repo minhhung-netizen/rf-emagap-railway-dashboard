@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RF + EMA Portfolio Gate</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/styles.css?v=20260905-position-rebalance" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260907-fund-analytics" />
+    <link rel="stylesheet" href="/static/fund-analytics.css?v=1" />
   </head>
   <body>
     <div id="loginScreen" class="loginScreen">
@@ -92,6 +93,7 @@
       </section>
 
       <div class="tabPanel active" data-tab-panel="overview">
+        <section id="marketRiskPanel" class="fundPanel" hidden aria-live="polite"></section>
         <section class="metrics" aria-label="Signal summary">
           <article>
             <span id="metricTotalLabel" data-i18n="total">Total</span>
@@ -580,12 +582,14 @@
       </div>
 
       <div class="tabPanel" data-tab-panel="performance">
+        <section id="fundPerformancePanel" class="fundPanel" hidden aria-live="polite"></section>
         <section class="analyticsGrid">
           <div class="equityPanel">
             <div class="panelHead">
               <div>
-                <p class="eyebrow">Gate-approved performance</p>
-                <h2 data-i18n="closedTradeGrowth">Closed Trade Growth</h2>
+                <p class="eyebrow">Thống kê tín hiệu • không phải NAV</p>
+                <h2>Giao dịch tín hiệu đã đóng</h2>
+                <p class="panelNote">Chuỗi mô phỏng từ lợi nhuận tín hiệu, chưa phản ánh tiền mặt, phí và tài sản đang mở. Hiệu suất NAV được trình bày riêng phía trên.</p>
               </div>
             </div>
             <div id="portfolioMetrics" class="portfolioMetrics"></div>
@@ -739,13 +743,13 @@
             <div class="panelHead compactHead">
               <div>
                 <p class="eyebrow">Webhook portfolio gate</p>
-                <h2>Exposure đang được chấp nhận</h2>
+                <h2>Exposure được rebalance chấp nhận</h2>
               </div>
               <span id="portfolioGateSource">Chưa có snapshot chuẩn</span>
             </div>
             <div class="metrics portfolioGateMetrics">
-              <article><span>Exposure hiện tại</span><strong id="portfolioGateExposure">-</strong></article>
-              <article><span>Số vị thế</span><strong id="portfolioGatePositions">-</strong></article>
+              <article><span>Exposure khuyến nghị</span><strong id="portfolioGateExposure">-</strong></article>
+              <article><span>Vị thế khuyến nghị</span><strong id="portfolioGatePositions">-</strong></article>
               <article><span>RF sleeve</span><strong id="portfolioGateRf">-</strong></article>
               <article><span>EMA sleeve</span><strong id="portfolioGateEma">-</strong></article>
             </div>
@@ -1350,6 +1354,7 @@
       </div>
 
       <div class="tabPanel" data-tab-panel="admin">
+        <section id="fundAdminPanel" class="fundPanel adminOnly"></section>
         <section class="adminPanel">
           <div class="panelHead">
             <div>
@@ -1469,6 +1474,7 @@
     </div>
 
     <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
-    <script src="/static/app.js?v=20260905-position-rebalance"></script>
+    <script src="/static/fund-analytics.js?v=1"></script>
+    <script src="/static/app.js?v=20260907-fund-analytics"></script>
   </body>
 </html>

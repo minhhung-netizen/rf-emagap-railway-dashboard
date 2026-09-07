@@ -13,6 +13,13 @@ recommendation or an automated order.
 ```text
 TradingView alert -- WEBHOOK_SECRET --> /webhook --> RF + EMA portfolio gate --> signal monitor
 
+The Portfolio Gate monitor distinguishes two exposures: **rebalance-recommended
+exposure** counts only open positions whose ticker appears in the latest RF or
+EMA recommendation list; **active gate exposure** counts every open gate
+position for hard caps. A holding outside the latest recommendation is therefore
+not presented as currently recommended, but it still consumes the gate's ticker,
+sector, sleeve, and total-exposure limits until its sell signal is received.
+
 Local RF + EMA backtest -- BACKTEST_INGEST_TOKEN --> /api/portfolio-backtests/import
                                                   --> portfolio monitor baseline
 ```

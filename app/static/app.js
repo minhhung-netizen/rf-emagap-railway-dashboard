@@ -986,9 +986,9 @@ Object.assign(translations.en, {
   recentClosed: "New closes",
   hideBanner: "Hide",
   showBanner: "Show",
-  riskOverview: "Risk Overview",
-  portfolioRisk: "Portfolio Risk",
-  totalExposure: "Total exposure",
+  riskOverview: "Signal Risk Overview",
+  portfolioRisk: "Signal risk • planned weights, not NAV",
+  totalExposure: "Planned signal exposure",
   weightedOpenPl: "Weighted open P/L",
   topTickerExposure: "Top ticker exposure",
   stressMinus5: "Stress -5%",
@@ -1022,9 +1022,9 @@ Object.assign(translations.vi, {
   recentClosed: "Mới đóng",
   hideBanner: "Ẩn",
   showBanner: "Hiện",
-  riskOverview: "Rủi ro",
-  portfolioRisk: "Rủi ro danh mục",
-  totalExposure: "Tổng tỷ trọng",
+  riskOverview: "Rủi ro tín hiệu",
+  portfolioRisk: "Rủi ro tín hiệu • tỷ trọng kế hoạch, không phải NAV",
+  totalExposure: "Tổng tỷ trọng tín hiệu dự kiến",
   weightedOpenPl: "Lãi/lỗ theo tỷ trọng",
   topTickerExposure: "Mã chiếm tỷ trọng cao nhất",
   stressMinus5: "Giả định giảm 5%",
@@ -2933,6 +2933,7 @@ function setAuthenticatedUser(user, availableFeatures, availableStrategies = [])
 }
 
 function showLogin() {
+  window.FundAnalytics?.clear();
   state.user = null;
   state.dcaSettings = { initialCapital: null, updatedAt: "" };
   els.dcaInitialCapital.value = formatDcaInitialCapitalValue(els.dcaInitialCapital.defaultValue || "");
@@ -3277,6 +3278,7 @@ async function refresh() {
   renderUserAttention();
   renderRiskOverview();
   renderRiskAlerts();
+  await window.FundAnalytics?.refresh(state.user);
   state.lastRefreshAt = new Date();
   els.syncStatus.textContent = t("syncedJustNow");
 
@@ -3680,23 +3682,27 @@ function renderRebalanceRecommendation(ticker) {
 
 function renderPortfolioGate(gate) {
   const placeholder = "-";
-  const current = gate?.state || {};
+  const allOpen = gate?.state || {};
+  const current = gate?.rebalance_recommended || {};
   const guardrails = gate?.guardrails || {};
   const percent = (value) =>
     Number.isFinite(Number(value)) ? formatPercent(Number(value)) : placeholder;
   const cap = (value) =>
     Number.isFinite(Number(value)) ? formatPercent(Number(value) * 100) : placeholder;
 
-  els.portfolioGateExposure.textContent = percent(current.total_exposure_pct);
-  els.portfolioGatePositions.textContent = Array.isArray(current.positions)
+  const recommendationAvailable = current.available === true;
+  els.portfolioGateExposure.textContent = recommendationAvailable
+    ? percent(current.total_exposure_pct)
+    : placeholder;
+  els.portfolioGatePositions.textContent = recommendationAvailable && Array.isArray(current.positions)
     ? current.positions.length
-    : 0;
-  els.portfolioGateRf.textContent = percent(current.by_sleeve_pct?.RF || 0);
-  els.portfolioGateEma.textContent = percent(current.by_sleeve_pct?.EMA || 0);
+    : placeholder;
+  els.portfolioGateRf.textContent = recommendationAvailable ? percent(current.by_sleeve_pct?.RF || 0) : placeholder;
+  els.portfolioGateEma.textContent = recommendationAvailable ? percent(current.by_sleeve_pct?.EMA || 0) : placeholder;
   els.portfolioGateSource.textContent = gate?.source_report_date
     ? `Snapshot ${formatDateOnly(gate.source_report_date)}`
     : "Dùng ràng buộc mặc định";
-  els.portfolioGatePolicy.textContent = [
+  const policy = [
     `Trần tổng ${cap(guardrails.total_exposure_cap)}`,
     `mã ${cap(guardrails.ticker_cap)}`,
     `ngành ${cap(guardrails.sector_cap)}`,
@@ -3704,7 +3710,18 @@ function renderPortfolioGate(gate) {
     `EMA ${cap(guardrails.ema_hard_cap)}`,
     `Buy mặc định ${formatPercent(state.defaultSignalWeightPct)}`,
     "confirm-buy chỉ được top-up vị thế base đang mở",
-  ].join(" · ");
+  ];
+  if (!recommendationAvailable) {
+    policy.unshift("Chưa có danh sách rebalance hợp lệ — không gán exposure được chấp nhận");
+  } else {
+    const allCount = Array.isArray(allOpen.positions) ? allOpen.positions.length : 0;
+    const excluded = Array.isArray(current.excluded_positions) ? current.excluded_positions : [];
+    policy.unshift(`Rebalance chấp nhận ${current.positions.length}/${allCount} vị thế · ${percent(current.total_exposure_pct)}`);
+    if (excluded.length) {
+      policy.unshift(`${excluded.length} vị thế ngoài danh mục khuyến nghị không cộng ở trên, nhưng vẫn tính vào trần Gate: ${percent(allOpen.total_exposure_pct)}`);
+    }
+  }
+  els.portfolioGatePolicy.textContent = policy.join(" · ");
 }
 
 function filterSignalsForWatchlist(signals) {
@@ -5599,6 +5616,7 @@ function formatReason(reason) {
     invalid_ticker_or_action: "Mã chứng khoán hoặc loại lệnh không hợp lệ",
     confirmation_base_strategy_missing: "Tín hiệu xác nhận thiếu chiến lược gốc",
     unsupported_asset_type: "Loại tài sản không được hỗ trợ",
+    nav_risk_pause: "Tạm dừng phân bổ mới theo rủi ro NAV — kiểm tra NAV, drawdown và exposure",
   }[reason] || reason || "-";
 }
 
@@ -5694,8 +5712,6 @@ function renderPortfolioMetrics() {
     { label: t("metricProfitFactor"), value: formatRatio(metrics.profit_factor) },
     { label: t("metricWinRate"), value: formatPercent(metrics.win_rate_pct) },
     { label: t("metricExpectancy"), value: formatSignedPercent(metrics.expectancy_pct) },
-    { label: t("metricSharpe"), value: formatRatio(metrics.sharpe) },
-    { label: t("metricSortino"), value: formatRatio(metrics.sortino) },
     { label: t("metricClosedTradesCount"), value: String(metrics.closed_trades) },
   ];
   els.portfolioMetrics.innerHTML = items.map((item) => `

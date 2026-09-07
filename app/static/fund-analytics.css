@@ -1,0 +1,28 @@
+.fundPanel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 24px; margin: 0 0 20px; box-shadow: var(--shadow); min-width: 0; }
+.fundPanel[hidden] { display: none; }
+.fundPanel h2 { margin: 4px 0 10px; font-size: 23px; }
+.fundPanel h3 { margin: 22px 0 10px; font-size: 16px; }
+.fundPanel p { color: var(--muted); }
+.fundKpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin: 18px 0; }
+.fundKpis article { padding: 14px; background: var(--field); border-radius: 10px; border: 1px solid var(--line-soft); }
+.fundKpis span { display: block; color: var(--muted); font-size: 12px; }
+.fundKpis strong { display: block; margin-top: 8px; font-size: 21px; font-variant-numeric: tabular-nums; }
+.fundGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.fundNotice { border-left: 3px solid var(--warning); padding: 10px 14px; background: var(--field); }
+.fundOk { border-left-color: var(--buy); }
+.fundForm { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
+.fundForm label { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
+.fundForm input, .fundForm select, .fundPanel td input, .fundPanel td select { width: 100%; min-width: 95px; }
+.fundPanel td input[name="sector"] { min-width: 150px; }
+.fundActions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 14px 0; }
+.fundPanel svg { display: block; width: 100%; height: auto; min-height: 180px; }
+.fundPanel table { width: 100%; }
+.fundPanel summary { cursor: pointer; margin: 16px 0; font-weight: 600; }
+.fundPanel .fundError { color: var(--sell); }
+.fundChartNav { color: var(--accent); }
+.fundChartBenchmark { color: var(--buy); }
+.fundPanel .fundEmpty { padding: 25px 10px; color: var(--muted); }
+.fundEditorNote { max-width: 900px; }
+.fundPanel .tableWrap { max-height: 400px; }
+.fundPanel input[type="checkbox"] { width: auto; min-width: auto; }
+@media(max-width: 700px) { .fundGrid { grid-template-columns: 1fr; } .fundPanel { padding: 15px; } .fundKpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .fundKpis strong { font-size: 18px; } }

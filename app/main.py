@@ -4,6 +4,7 @@ import asyncio
 import csv
 import hmac
 import io
+import json
 import logging
 import sqlite3
 from contextlib import asynccontextmanager
@@ -51,8 +52,12 @@ from app.services.portfolio_gate import (
     evaluate_portfolio_signal,
     guardrails_from_backtest,
     portfolio_gate_state,
+    rebalance_recommended_state,
 )
 from app.services.webhook_payload import parse_forgiving_json, parse_tradingview_alert_text
+from app.services.fund_analytics import (
+    NavImport, RiskPolicy, build_fund_performance, build_market_risk,
+)
 from app.services.auth import (
     ALL_FEATURES,
     SESSION_COOKIE,
@@ -166,9 +171,9 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "app" / "static"), name="static")
 
 FEATURE_PATHS = {
-    "overview": ("/api/summary", "/api/signals", "/api/chart/"),
-    "positions": ("/api/performance", "/api/sectors"),
-    "performance": ("/api/performance",),
+    "overview": ("/api/summary", "/api/signals", "/api/chart/", "/api/market-risk"),
+    "positions": ("/api/performance", "/api/sectors", "/api/market-risk"),
+    "performance": ("/api/performance", "/api/fund-performance"),
     "portfolioMonitor": ("/api/portfolio-backtests", "/api/portfolio-gate"),
     "dividends": ("/api/dividend-events",),
     "logs": ("/api/invalid-signals", "/api/export/"),
@@ -689,6 +694,17 @@ async def receive_webhook(
         }
     payload_data["portfolio_gate"] = gate["classification"]
 
+    # An optional portfolio-wide NAV circuit breaker; exits remain available.
+    policy = fund_risk_policy()
+    if action in {"buy", "confirm_buy"} and policy["pause_new_allocations"]:
+        risk = build_market_risk(store.list_nav_snapshots(), gate["guardrails"], policy)
+        if risk["pause_recommended"]:
+            return record_webhook_error(
+                request=request, reason="nav_risk_pause",
+                detail="NAV risk policy paused new allocations; review NAV, drawdown and exposure.",
+                payload=payload, ticker=ticker, action=action,
+            )
+
     ticker_was_open = action == "sell" and ticker in open_position_tickers()
     signal = store.insert_signal(
         ticker=ticker,
@@ -1187,12 +1203,60 @@ def dca_plan_values(payload: DcaPlanPayload, request: Request) -> dict[str, Any]
 @app.get("/api/portfolio-gate")
 def portfolio_gate() -> dict[str, Any]:
     backtest = store.latest_portfolio_backtest()
+    gate_state = portfolio_gate_state(store.list_all_signals())
     return {
         "guardrails": guardrails_from_backtest(backtest),
-        "state": portfolio_gate_state(store.list_all_signals()),
+        # ``state`` is used for hard limits.  The rebalance card intentionally
+        # receives a separate, narrower view of positions currently recommended.
+        "state": gate_state,
+        "rebalance_recommended": rebalance_recommended_state(gate_state, backtest),
         "source_report_date": backtest.get("report_date") if backtest else None,
         "source_title": backtest.get("title") if backtest else None,
     }
+
+
+def fund_risk_policy() -> dict[str, Any]:
+    return RiskPolicy.model_validate(json.loads(store.get_app_setting("fund_risk_policy", "{}"))).model_dump()
+
+
+def require_portfolio_wide_access(request: Request) -> None:
+    if strategy_restricted(request.state.user):
+        raise HTTPException(status_code=403, detail="Whole-portfolio NAV requires an account without strategy restrictions")
+
+
+@app.get("/api/fund-performance")
+def fund_performance(request: Request) -> dict[str, Any]:
+    require_portfolio_wide_access(request)
+    return build_fund_performance(store.list_nav_snapshots(), fund_risk_policy())
+
+
+@app.get("/api/market-risk")
+def market_risk(request: Request) -> dict[str, Any]:
+    require_portfolio_wide_access(request)
+    return build_market_risk(store.list_nav_snapshots(), guardrails_from_backtest(store.latest_portfolio_backtest()), fund_risk_policy())
+
+
+@app.get("/api/admin/nav-snapshots")
+def nav_snapshots() -> dict[str, Any]:
+    return {"snapshots": store.list_nav_snapshots(), "policy": fund_risk_policy()}
+
+
+@app.post("/api/admin/nav-snapshots")
+def import_nav_snapshots(payload: NavImport, request: Request) -> dict[str, Any]:
+    try:
+        count = store.import_nav_snapshots(
+            [row.model_dump(mode="json") for row in payload.snapshots],
+            user_id=request.state.user["id"], replace_existing=payload.replace_existing,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "saved", "count": count}
+
+
+@app.patch("/api/admin/fund-risk-policy")
+def save_fund_risk_policy(payload: RiskPolicy) -> dict[str, Any]:
+    store.set_app_setting("fund_risk_policy", payload.model_dump_json())
+    return {"policy": payload.model_dump()}
 
 
 @app.get("/api/portfolio-backtests/latest")

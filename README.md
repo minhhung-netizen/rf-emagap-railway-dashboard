@@ -92,6 +92,12 @@ fundamental metrics are skipped unless explicitly enabled.
 
 ## Performance Tracking
 
+For reconciled NAV performance (TWR, XIRR, drawdown, benchmark and P/L attribution)
+and market-value risk controls, see [FUND_ANALYTICS.md](FUND_ANALYTICS.md).
+These analytics use administrator-supplied end-of-day account valuations, not
+signal counts or assumed allocations. Start in **Quản trị → NAV cuối ngày**;
+the new-allocation pause is disabled by default.
+
 The dashboard pairs and reports signals separately by `ticker` and `strategy`:
 
 - `buy` opens one long position.

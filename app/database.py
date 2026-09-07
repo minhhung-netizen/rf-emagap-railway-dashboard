@@ -9,6 +9,19 @@ from typing import Any, Iterator
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS nav_snapshots (
+    trade_date TEXT PRIMARY KEY,
+    snapshot_json TEXT NOT NULL,
+    updated_by INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS nav_snapshot_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_date TEXT NOT NULL,
+    snapshot_json TEXT NOT NULL,
+    updated_by INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS signals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker TEXT NOT NULL,
@@ -291,6 +304,31 @@ def default_sector_map() -> dict[str, str]:
 
 
 class SignalStore:
+    def list_nav_snapshots(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute("SELECT snapshot_json FROM nav_snapshots ORDER BY trade_date").fetchall()
+        return [json.loads(row["snapshot_json"]) for row in rows]
+
+    def import_nav_snapshots(self, snapshots: list[dict], *, user_id: int, replace_existing: bool = False) -> int:
+        dates = [row["trade_date"] for row in snapshots]
+        if len(dates) != len(set(dates)):
+            raise ValueError("Duplicate dates in import")
+        with self.connect() as conn:
+            # Acquire the write lock before checking replacements: atomic batch.
+            conn.execute("BEGIN IMMEDIATE")
+            for snapshot in snapshots:
+                day = snapshot["trade_date"]
+                existing = conn.execute("SELECT snapshot_json FROM nav_snapshots WHERE trade_date = ?", (day,)).fetchone()
+                encoded = json.dumps(snapshot, ensure_ascii=False, allow_nan=False)
+                if existing and existing["snapshot_json"] == encoded:
+                    continue
+                if existing and not replace_existing:
+                    raise ValueError(f"NAV {day} already exists; explicitly enable replacement")
+                now = utc_now_iso()
+                conn.execute("INSERT INTO nav_snapshot_revisions (trade_date, snapshot_json, updated_by, updated_at) VALUES (?, ?, ?, ?)", (day, encoded, user_id, now))
+                conn.execute("INSERT INTO nav_snapshots VALUES (?, ?, ?, ?) ON CONFLICT(trade_date) DO UPDATE SET snapshot_json=excluded.snapshot_json, updated_by=excluded.updated_by, updated_at=excluded.updated_at", (day, encoded, user_id, now))
+        return len(snapshots)
+
     def __init__(self, database_path: Path) -> None:
         self.database_path = database_path
         self.database_path.parent.mkdir(parents=True, exist_ok=True)

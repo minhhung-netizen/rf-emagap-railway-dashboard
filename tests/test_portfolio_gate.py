@@ -14,6 +14,7 @@ from app.services.portfolio_gate import (
     evaluate_portfolio_signal,
     guardrails_from_backtest,
     portfolio_gate_state,
+    rebalance_recommended_state,
 )
 
 
@@ -73,6 +74,27 @@ def raw_webhook_request(body_text):
 
 
 class PortfolioGateTest(unittest.TestCase):
+
+    def test_rebalance_card_excludes_open_positions_outside_recommendation_but_gate_keeps_them(self):
+        classification = {
+            "version": 1, "sleeve": "RF", "sector": "real_estate",
+            "allocation_pct": 5, "position_strategy": "RF Stock MTF",
+        }
+        signals = [
+            stored_signal(signal_id=index, ticker=ticker, strategy="RF Stock MTF", action="buy", classification=classification)
+            for index, ticker in enumerate(("SZC", "DCM", "CSV"), start=1)
+        ]
+        all_open = portfolio_gate_state(signals)
+        recommended = rebalance_recommended_state(all_open, {
+            "summary": {"attention_lists": {"ema": {"rows": [{"ticker": "DCM", "rank": 4}]}}}
+        })
+
+        self.assertEqual(all_open["total_exposure_pct"], 15)
+        self.assertEqual(len(all_open["positions"]), 3)
+        self.assertTrue(recommended["available"])
+        self.assertEqual(recommended["total_exposure_pct"], 5)
+        self.assertEqual([row["ticker"] for row in recommended["positions"]], ["DCM"])
+        self.assertEqual({row["ticker"] for row in recommended["excluded_positions"]}, {"SZC", "CSV"})
 
     def test_unparseable_authenticated_webhook_is_logged_without_http_422(self):
         with tempfile.TemporaryDirectory() as temp_dir:
