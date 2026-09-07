@@ -1442,6 +1442,18 @@ main {
   font-weight: 400;
 }
 
+.performanceScopeControl {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  min-width: 220px;
+}
+
+.performanceScopeControl select {
+  min-width: 220px;
+}
+
 .portfolioMonitorGrid article {
   background: var(--panel-raised);
   border: 1px solid var(--line-soft);

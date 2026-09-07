@@ -20,6 +20,12 @@ position for hard caps. A holding outside the latest recommendation is therefore
 not presented as currently recommended, but it still consumes the gate's ticker,
 sector, sleeve, and total-exposure limits until its sell signal is received.
 
+In **Performance**, the signal report can be switched between all gate signals
+and tickers in the latest rebalance. The switch changes its metrics, equity
+curve, strategy rows, and closed-trade history together. The rebalance scope is
+intentionally labelled as current-snapshot membership; it is not a historical
+reconstruction of which list contained a ticker on the original entry date.
+
 Local RF + EMA backtest -- BACKTEST_INGEST_TOKEN --> /api/portfolio-backtests/import
                                                   --> portfolio monitor baseline
 ```

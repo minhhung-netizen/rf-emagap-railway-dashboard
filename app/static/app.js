@@ -65,6 +65,8 @@ const els = {
   performanceTickerFilter: document.querySelector("#performanceTickerFilter"),
   performanceStrategyFilter: document.querySelector("#performanceStrategyFilter"),
   performanceSort: document.querySelector("#performanceSort"),
+  performanceScope: document.querySelector("#performanceScope"),
+  performanceScopeNote: document.querySelector("#performanceScopeNote"),
   performanceClosedTradesTable: document.querySelector("#performanceClosedTradesTable"),
   backtestStatsForm: document.querySelector("#backtestStatsForm"),
   backtestTicker: document.querySelector("#backtestTicker"),
@@ -1045,6 +1047,15 @@ Object.assign(translations.vi, {
   newSellAlert: "Vừa có vị thế đóng",
   kellyUsage: "Đang dùng",
   activePositions: "Vị thế đang mở",
+  signalPerformanceScope: "Phạm vi thống kê",
+  signalPerformanceAll: "Tất cả tín hiệu Gate",
+  signalPerformanceRebalance: "Mã trong rebalance mới nhất",
+});
+
+Object.assign(translations.en, {
+  signalPerformanceScope: "Reporting scope",
+  signalPerformanceAll: "All gate signals",
+  signalPerformanceRebalance: "Tickers in latest rebalance",
 });
 
 Object.assign(translations.vi, {
@@ -2808,8 +2819,7 @@ function applyTranslations() {
   renderRiskAlerts();
   renderKellyCalculator();
   renderKellyEntries();
-  renderPerformance(sortPerformance(state.performanceStrategies));
-  renderPerformanceClosedTrades(state.performanceClosedTrades);
+  renderScopedSignalPerformance();
   renderBacktestStats(filterBacktestStats(state.backtestStats));
   renderDcaEditState();
   renderDcaSizing();
@@ -2827,7 +2837,7 @@ function applyTheme() {
     renderChart(state.selectedTicker);
   }
   if (state.activeTab === "performance") {
-    drawEquityCurve(state.performanceClosedTrades);
+    drawEquityCurve(scopedPerformanceClosedTrades());
   }
   if (state.activeTab === "manualPortfolio") {
     drawManualEquityCurve(state.manualPortfolio.equity_curve || []);
@@ -2867,7 +2877,7 @@ function setActiveTab(tabName) {
     renderChart(state.selectedTicker);
   }
   if (tabName === "performance") {
-    drawEquityCurve(state.performanceClosedTrades);
+    drawEquityCurve(scopedPerformanceClosedTrades());
   }
   if (tabName === "manualPortfolio") {
     drawManualEquityCurve(state.manualPortfolio.equity_curve || []);
@@ -3245,13 +3255,10 @@ async function refresh() {
   state.closedTrades = positionPayload.closed_trades || [];
   state.performanceStrategies = performancePayload.strategies || [];
   state.performanceClosedTrades = performancePayload.closed_trades || [];
-  updatePerformanceStrategyFilterOptions(state.performanceStrategies);
   renderClosedTrades(state.closedTrades);
-  renderPerformance(sortPerformance(state.performanceStrategies));
-  renderPerformanceClosedTrades(state.performanceClosedTrades);
-  renderPortfolioMetrics();
+  renderScopedSignalPerformance();
   if (state.activeTab === "performance") {
-    drawEquityCurve(state.performanceClosedTrades);
+    drawEquityCurve(scopedPerformanceClosedTrades());
   }
   renderRecentTradeBanner();
   renderAverageLossBanner();
@@ -4401,6 +4408,66 @@ function updateOpenPositionSectorFilterOptions(openTrades) {
   els.openPositionSectorFilter.append(new Option(state.language === "vi" ? "Tất cả ngành" : "All sectors", ""));
   sectors.forEach((sector) => els.openPositionSectorFilter.append(new Option(sector, sector)));
   els.openPositionSectorFilter.value = sectors.includes(currentValue) ? currentValue : "";
+}
+
+function rebalancePerformanceTickers() {
+  const summary = state.portfolioBacktest?.summary || {};
+  const lists = summary.attention_lists || {};
+  const candidates = [lists.rf, lists.ema, summary.attention_list];
+  const tickers = new Set();
+  let hasRecommendation = false;
+  candidates.forEach((list) => {
+    if (!list || !Array.isArray(list.rows)) return;
+    hasRecommendation = true;
+    list.rows.forEach((row) => {
+      const ticker = rebalanceTicker(row?.ticker || row?.symbol);
+      if (ticker) tickers.add(ticker);
+    });
+  });
+  return hasRecommendation ? tickers : null;
+}
+
+function isRebalancePerformanceScope() {
+  return els.performanceScope?.value === "rebalance";
+}
+
+function scopedPerformanceStrategies() {
+  if (!isRebalancePerformanceScope()) return state.performanceStrategies;
+  const tickers = rebalancePerformanceTickers();
+  if (!tickers) return [];
+  return state.performanceStrategies.filter((row) => tickers.has(String(row.ticker || "").toUpperCase()));
+}
+
+function scopedPerformanceClosedTrades() {
+  if (!isRebalancePerformanceScope()) return state.performanceClosedTrades;
+  const tickers = rebalancePerformanceTickers();
+  if (!tickers) return [];
+  return state.performanceClosedTrades.filter((trade) => tickers.has(String(trade.ticker || "").toUpperCase()));
+}
+
+function renderSignalPerformanceScopeNote() {
+  if (!els.performanceScopeNote) return;
+  if (!isRebalancePerformanceScope()) {
+    els.performanceScopeNote.textContent = "Bao gồm tất cả tín hiệu đã đi qua Portfolio Gate trong phạm vi bộ lọc hiện tại.";
+    return;
+  }
+  const tickers = rebalancePerformanceTickers();
+  if (!tickers) {
+    els.performanceScopeNote.textContent = "Chưa có danh sách rebalance hợp lệ, nên không thể tách nhóm này.";
+    return;
+  }
+  els.performanceScopeNote.textContent = `Chỉ gồm ${tickers.size} mã trong danh sách rebalance mới nhất. Đây là phân loại theo snapshot hiện tại, không thay thế lịch sử danh mục tại ngày vào lệnh.`;
+}
+
+function renderScopedSignalPerformance() {
+  const strategies = scopedPerformanceStrategies();
+  const closedTrades = scopedPerformanceClosedTrades();
+  updatePerformanceStrategyFilterOptions(strategies);
+  renderSignalPerformanceScopeNote();
+  renderPerformance(sortPerformance(strategies));
+  renderPerformanceClosedTrades(closedTrades);
+  renderPortfolioMetrics(closedTrades);
+  if (state.activeTab === "performance") drawEquityCurve(closedTrades);
 }
 
 function updatePerformanceStrategyFilterOptions(strategyRows) {
@@ -5699,9 +5766,9 @@ function portfolioTradeWeightPct(trade) {
   return baseWeight + topUps;
 }
 
-function renderPortfolioMetrics() {
+function renderPortfolioMetrics(closedTrades = state.performanceClosedTrades) {
   if (!els.portfolioMetrics) return;
-  const metrics = computeAllocatedPortfolioMetrics(state.performanceClosedTrades);
+  const metrics = computeAllocatedPortfolioMetrics(closedTrades);
   if (!metrics.closed_trades) {
     els.portfolioMetrics.innerHTML = `<div class="empty">${escapeHtml(t("noClosedTradeMetrics"))}</div>`;
     return;
@@ -6790,6 +6857,7 @@ els.positionInsightChart.addEventListener("click", () => {
 els.performanceTickerFilter.addEventListener("input", refresh);
 els.performanceStrategyFilter.addEventListener("change", refresh);
 els.performanceSort.addEventListener("change", refresh);
+els.performanceScope.addEventListener("change", renderScopedSignalPerformance);
 els.backtestStrategyFilter.addEventListener("change", () => renderBacktestStats(filterBacktestStats(state.backtestStats)));
 els.backtestTickerSearch.addEventListener("input", () => renderBacktestStats(filterBacktestStats(state.backtestStats)));
 els.backtestStatsForm.addEventListener("submit", saveBacktestStats);

@@ -591,7 +591,14 @@
                 <h2>Giao dịch tín hiệu đã đóng</h2>
                 <p class="panelNote">Chuỗi mô phỏng từ lợi nhuận tín hiệu, chưa phản ánh tiền mặt, phí và tài sản đang mở. Hiệu suất NAV được trình bày riêng phía trên.</p>
               </div>
+              <label class="performanceScopeControl"><span data-i18n="signalPerformanceScope">Phạm vi thống kê</span>
+                <select id="performanceScope" aria-label="Phạm vi thống kê tín hiệu">
+                  <option value="all" data-i18n="signalPerformanceAll">Tất cả tín hiệu Gate</option>
+                  <option value="rebalance" data-i18n="signalPerformanceRebalance">Mã trong rebalance mới nhất</option>
+                </select>
+              </label>
             </div>
+            <p id="performanceScopeNote" class="panelNote" aria-live="polite"></p>
             <div id="portfolioMetrics" class="portfolioMetrics"></div>
             <canvas id="equityChart" height="260"></canvas>
           </div>
