@@ -50,7 +50,75 @@ def webhook_request(payload):
     )
 
 
+def raw_webhook_request(body_text):
+    body = body_text.encode("utf-8")
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.disconnect"}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/webhook",
+            "headers": [(b"content-type", b"text/plain")],
+        },
+        receive,
+    )
+
+
 class PortfolioGateTest(unittest.TestCase):
+
+    def test_unparseable_authenticated_webhook_is_logged_without_http_422(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            settings = replace(dashboard_main.settings, webhook_secret="gate-test-secret")
+            with patch.object(dashboard_main, "store", store), patch.object(
+                dashboard_main, "settings", settings
+            ):
+                result = asyncio.run(
+                    dashboard_main.receive_webhook(
+                        raw_webhook_request("an alert with no usable fields"),
+                        secret="gate-test-secret",
+                    )
+                )
+
+            self.assertEqual(result["status"], "invalid")
+            self.assertEqual(result["reason"], "unparseable_webhook")
+            self.assertEqual(
+                store.list_invalid_signals()[0]["payload"]["raw_body"],
+                "an alert with no usable fields",
+            )
+
+    def test_plaintext_order_fill_reaches_portfolio_gate(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            settings = replace(dashboard_main.settings, webhook_secret="gate-test-secret")
+            text = (
+                '"RF Stock Rebalance (HL2, 100, 5): '
+                'lệnh buy @6900 được thực hiện MBB. Vị thế mới là 1"\n'
+                "HOSE:MBB, 1h • Hoạt động"
+            )
+            with patch.object(dashboard_main, "store", store), patch.object(
+                dashboard_main, "settings", settings
+            ), patch.object(dashboard_main, "enqueue_signal_enrichment"):
+                result = asyncio.run(
+                    dashboard_main.receive_webhook(
+                        raw_webhook_request(text),
+                        secret="gate-test-secret",
+                    )
+                )
+
+            self.assertEqual(result["status"], "accepted")
+            self.assertEqual(result["signal"]["ticker"], "MBB")
+            self.assertEqual(result["signal"]["price"], 6.9)
+            self.assertEqual(result["classification"]["sleeve"], "RF")
+
     def test_snapshot_guardrails_override_the_defaults(self):
         guardrails = guardrails_from_backtest(
             {

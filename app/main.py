@@ -52,7 +52,7 @@ from app.services.portfolio_gate import (
     guardrails_from_backtest,
     portfolio_gate_state,
 )
-from app.services.webhook_payload import parse_forgiving_json
+from app.services.webhook_payload import parse_forgiving_json, parse_tradingview_alert_text
 from app.services.auth import (
     ALL_FEATURES,
     SESSION_COOKIE,
@@ -588,29 +588,57 @@ async def receive_webhook(
     request: Request,
     secret: str | None = Query(default=None),
 ) -> dict[str, Any]:
-    payload = await parse_webhook_payload(request)
+    try:
+        payload = await parse_webhook_payload(request)
+    except HTTPException as exc:
+        # Do not weaken webhook authentication merely because the body is bad.
+        # A malformed body cannot safely provide its own secret, so the query
+        # parameter must authenticate it before it is written to the error log.
+        parsed_data = getattr(request.state, "webhook_parsed_data", {})
+        body_secret = parsed_data.get("secret") if isinstance(parsed_data, dict) else None
+        if settings.webhook_secret and not (
+            secret_matches(secret, settings.webhook_secret)
+            or secret_matches(body_secret, settings.webhook_secret)
+        ):
+            raise HTTPException(status_code=401, detail="Invalid webhook secret") from exc
+        return record_webhook_error(
+            request=request,
+            reason=webhook_parse_error_reason(exc),
+            detail=exc.detail,
+        )
     if settings.webhook_secret and settings.webhook_secret not in {secret, payload.secret}:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
     if is_derivative_payload(payload):
-        raise HTTPException(
-            status_code=422,
+        return record_webhook_error(
+            request=request,
+            reason="unsupported_asset_type",
             detail="This Railway portfolio-gate edition accepts RF/EMA stock signals only",
+            payload=payload,
         )
 
     try:
         ticker, exchange = normalize_ticker(payload.ticker)
         action = normalize_action(payload.action)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return record_webhook_error(
+            request=request,
+            reason="invalid_ticker_or_action",
+            detail=str(exc),
+            payload=payload,
+        )
 
     is_confirmation = is_confirmation_signal(payload, action)
     payload_data = payload.model_dump()
     required_open_strategy = required_open_strategy_for_signal(payload, action)
     if is_confirmation and not required_open_strategy:
-        raise HTTPException(
-            status_code=422,
+        return record_webhook_error(
+            request=request,
+            reason="confirmation_base_strategy_missing",
             detail="Confirmation signals require base_strategy or confirm_for",
+            payload=payload,
+            ticker=ticker,
+            action=action,
         )
     duplicate = store.find_duplicate_signal(
         ticker=ticker,
@@ -742,14 +770,63 @@ async def parse_webhook_payload(request: Request) -> WebhookPayload:
     if not body:
         raise HTTPException(status_code=422, detail="Webhook body is required")
     text = body.decode("utf-8", errors="replace").strip()
+    request.state.webhook_raw_body = text
     try:
         data = parse_forgiving_json(text)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError:
+        try:
+            data = parse_tradingview_alert_text(text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    request.state.webhook_parsed_data = data
     try:
         return WebhookPayload.model_validate(data)
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+
+def secret_matches(provided: str | None, expected: str) -> bool:
+    return bool(provided) and hmac.compare_digest(str(provided), expected)
+
+
+def webhook_parse_error_reason(exc: HTTPException) -> str:
+    detail = exc.detail
+    if detail == "Webhook body is required":
+        return "empty_webhook_body"
+    if isinstance(detail, list):
+        return "invalid_webhook_fields"
+    return "unparseable_webhook"
+
+
+def record_webhook_error(
+    *,
+    request: Request,
+    reason: str,
+    detail: Any,
+    payload: WebhookPayload | None = None,
+    ticker: str | None = None,
+    action: str | None = None,
+) -> dict[str, Any]:
+    raw_body = getattr(request.state, "webhook_raw_body", "")
+    payload_data = payload.model_dump() if payload is not None else {
+        "raw_body": raw_body,
+        "content_type": request.headers.get("content-type"),
+    }
+    invalid_signal = store.record_invalid_signal(
+        ticker=ticker,
+        action=action,
+        timeframe=payload.timeframe if payload is not None else None,
+        strategy=payload.strategy if payload is not None else None,
+        reason=reason,
+        source_time=payload.time if payload is not None else None,
+        payload=payload_data,
+    )
+    return {
+        "status": "invalid",
+        "reason": reason,
+        "detail": detail,
+        "invalid_signal": invalid_signal,
+    }
 
 
 def confirmation_base_strategy(payload: WebhookPayload) -> str | None:

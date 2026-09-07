@@ -5593,6 +5593,12 @@ function formatReason(reason) {
     invalid_allocation_pct: "Tỷ trọng lệnh không hợp lệ",
     portfolio_base_position_not_open: "Chưa có vị thế base qua portfolio gate",
     portfolio_position_not_open: "Không có vị thế gate để đóng",
+    empty_webhook_body: "Webhook không có nội dung",
+    unparseable_webhook: "Không phân tích được nội dung webhook",
+    invalid_webhook_fields: "Webhook thiếu hoặc sai trường bắt buộc",
+    invalid_ticker_or_action: "Mã chứng khoán hoặc loại lệnh không hợp lệ",
+    confirmation_base_strategy_missing: "Tín hiệu xác nhận thiếu chiến lược gốc",
+    unsupported_asset_type: "Loại tài sản không được hỗ trợ",
   }[reason] || reason || "-";
 }
 
