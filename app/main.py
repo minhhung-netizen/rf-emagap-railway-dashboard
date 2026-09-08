@@ -58,6 +58,7 @@ from app.services.webhook_payload import parse_forgiving_json, parse_tradingview
 from app.services.fund_analytics import (
     NavImport, RiskPolicy, build_fund_performance, build_market_risk,
 )
+from app.services import trade_ledger
 from app.services.auth import (
     ALL_FEATURES,
     SESSION_COOKIE,
@@ -1239,6 +1240,41 @@ def market_risk(request: Request) -> dict[str, Any]:
 @app.get("/api/admin/nav-snapshots")
 def nav_snapshots() -> dict[str, Any]:
     return {"snapshots": store.list_nav_snapshots(), "policy": fund_risk_policy()}
+
+
+def ledger_action(fn, *args):
+    try:
+        return fn(store, *args)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/admin/ledger")
+def get_trade_ledger(trade_date: date | None = None):
+    day = trade_date or trade_ledger.today()
+    if day > trade_ledger.today():
+        raise HTTPException(status_code=422, detail="Không định giá ngày tương lai")
+    return ledger_action(trade_ledger.report, day.isoformat())
+
+
+@app.post("/api/admin/ledger/entries")
+def post_ledger_entries(payload: trade_ledger.EntryBatch, request: Request):
+    return ledger_action(trade_ledger.add_entries, payload, request.state.user["id"])
+
+
+@app.post("/api/admin/ledger/entries/{entry_id}/void")
+def void_ledger_entry(entry_id: int, payload: trade_ledger.VoidEntry, request: Request):
+    return ledger_action(trade_ledger.void_entry, entry_id, payload.reason, request.state.user["id"])
+
+
+@app.post("/api/admin/ledger/prices")
+def post_ledger_price(payload: trade_ledger.VerifiedPrice, request: Request):
+    return ledger_action(trade_ledger.add_price, payload, request.state.user["id"])
+
+
+@app.post("/api/admin/ledger/close")
+def close_ledger_nav(payload: trade_ledger.CloseRequest, request: Request):
+    return ledger_action(trade_ledger.close_nav, payload, request.state.user["id"])
 
 
 @app.post("/api/admin/nav-snapshots")

@@ -13,6 +13,10 @@ recommendation or an automated order.
 ```text
 TradingView alert -- WEBHOOK_SECRET --> /webhook --> RF + EMA portfolio gate --> signal monitor
 
+Local RF + EMA backtest -- BACKTEST_INGEST_TOKEN --> /api/portfolio-backtests/import
+                                                  --> portfolio monitor baseline
+```
+
 The Portfolio Gate monitor distinguishes two exposures: **rebalance-recommended
 exposure** counts only open positions whose ticker appears in the latest RF or
 EMA recommendation list; **active gate exposure** counts every open gate
@@ -25,10 +29,6 @@ and tickers in the latest rebalance. The switch changes its metrics, equity
 curve, strategy rows, and closed-trade history together. The rebalance scope is
 intentionally labelled as current-snapshot membership; it is not a historical
 reconstruction of which list contained a ticker on the original entry date.
-
-Local RF + EMA backtest -- BACKTEST_INGEST_TOKEN --> /api/portfolio-backtests/import
-                                                  --> portfolio monitor baseline
-```
 
 The two credentials must be different. The importer accepts the token only in
 the `X-Backtest-Ingest-Token` header so it cannot be exposed in a Pine alert

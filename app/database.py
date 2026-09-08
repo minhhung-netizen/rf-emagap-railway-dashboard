@@ -9,6 +9,28 @@ from typing import Any, Iterator
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS ledger_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reference TEXT NOT NULL UNIQUE,
+    entry_json TEXT NOT NULL,
+    created_by INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    void_reason TEXT,
+    voided_by INTEGER,
+    voided_at TEXT
+);
+CREATE TABLE IF NOT EXISTS ledger_prices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    price_json TEXT NOT NULL,
+    created_by INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ledger_closes (
+    trade_date TEXT PRIMARY KEY,
+    snapshot_json TEXT NOT NULL,
+    created_by INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS nav_snapshots (
     trade_date TEXT PRIMARY KEY,
     snapshot_json TEXT NOT NULL,
@@ -318,6 +340,8 @@ class SignalStore:
             conn.execute("BEGIN IMMEDIATE")
             for snapshot in snapshots:
                 day = snapshot["trade_date"]
+                if conn.execute("SELECT 1 FROM ledger_closes WHERE trade_date = ?", (day,)).fetchone():
+                    raise ValueError(f"NAV {day} is locked by the trade ledger")
                 existing = conn.execute("SELECT snapshot_json FROM nav_snapshots WHERE trade_date = ?", (day,)).fetchone()
                 encoded = json.dumps(snapshot, ensure_ascii=False, allow_nan=False)
                 if existing and existing["snapshot_json"] == encoded:

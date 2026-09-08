@@ -111,7 +111,7 @@
     const status=adminPanel.querySelector('#fundAdminStatus');status.classList.remove('fundError');status.textContent='Đang xử lý…';
     try {await fn();status.textContent=message;await refresh(activeUser);}catch(e){status.classList.add('fundError');status.textContent=e.message;}
   }
-  function clear() {generation++;activeUser=null;adminLoaded=false;renderedData=new WeakMap();for(const panel of [performancePanel,riskPanel,adminPanel]){panel.replaceChildren();panel.hidden=true;}}
+  function clear() {window.TradeLedger?.clear();generation++;activeUser=null;adminLoaded=false;renderedData=new WeakMap();for(const panel of [performancePanel,riskPanel,adminPanel]){panel.replaceChildren();panel.hidden=true;}}
   async function refresh(user) {
     if(!user){clear();return;}
     const identity=`${user.id}:${user.role}:${JSON.stringify(user.features)}:${JSON.stringify(user.strategies)}`;
@@ -120,6 +120,7 @@
     const admin=user.role==='admin', restricted=!admin && user.strategies?.length;
     const can=f=>admin || user.features?.includes(f);
     const jobs=[];
+    jobs.push(window.TradeLedger?.refresh(user));
     for(const [panel,allowed,url,render] of [[performancePanel,can('performance'),'/api/fund-performance',renderPerformance],[riskPanel,can('overview'),'/api/market-risk',renderRisk]]) {
       panel.hidden=!allowed;
       if(!allowed)continue;
