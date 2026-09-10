@@ -112,22 +112,23 @@ def summarize_portfolio_positions(positions: Any) -> dict[str, Any]:
 def rebalance_recommended_state(
     gate_state: dict[str, Any], backtest: dict[str, Any] | None
 ) -> dict[str, Any]:
-    """Open gate positions that appear in the latest rebalance recommendation.
+    """Open gate positions in the latest list for their own RF/EMA sleeve.
 
-    A ticker can appear in either RF or EMA recommendation list.  The list is a
-    current recommendation, not a record of which sleeve originally opened the
-    position.  Positions outside it remain in ``gate_state`` and still consume
-    hard-limit exposure; they are simply not shown as currently recommended.
+    A symbol in EMA must never make the same symbol held by RF recommended (or
+    vice versa). Positions outside their *matching* list remain in ``gate_state``
+    and continue to consume hard-limit exposure.
     """
     summary = (backtest or {}).get("summary") or {}
     attention_lists = summary.get("attention_lists") or {}
-    candidates = []
+    candidates: dict[str, Any] = {}
     if isinstance(attention_lists, dict):
-        candidates.extend([attention_lists.get("rf"), attention_lists.get("ema")])
-    candidates.append(summary.get("attention_list"))
-    recommended_tickers = set()
+        candidates = {"RF": attention_lists.get("rf"), "EMA": attention_lists.get("ema")}
+    # Older RF-only reports used attention_list before attention_lists.rf existed.
+    if not candidates.get("RF") and isinstance(summary.get("attention_list"), dict):
+        candidates["RF"] = summary["attention_list"]
+    recommended_tickers: dict[str, set[str]] = defaultdict(set)
     has_recommendation = False
-    for attention in candidates:
+    for sleeve, attention in candidates.items():
         if not isinstance(attention, dict) or not isinstance(attention.get("rows"), list):
             continue
         has_recommendation = True
@@ -136,7 +137,7 @@ def rebalance_recommended_state(
                 continue
             ticker = str(row.get("ticker") or row.get("symbol") or "").strip().upper().split(":")[-1]
             if ticker:
-                recommended_tickers.add(ticker)
+                recommended_tickers[sleeve].add(ticker)
     if not has_recommendation:
         return {
             "available": False,
@@ -149,13 +150,15 @@ def rebalance_recommended_state(
         }
     recommended = [
         position for position in gate_state.get("positions") or []
-        if str(position.get("ticker") or "").upper() in recommended_tickers
+        if str(position.get("ticker") or "").upper()
+        in recommended_tickers.get(str(position.get("sleeve") or "").upper(), set())
     ]
     result = summarize_portfolio_positions(recommended)
     result["available"] = True
     result["excluded_positions"] = [
         position for position in gate_state.get("positions") or []
-        if str(position.get("ticker") or "").upper() not in recommended_tickers
+        if str(position.get("ticker") or "").upper()
+        not in recommended_tickers.get(str(position.get("sleeve") or "").upper(), set())
     ]
     return result
 

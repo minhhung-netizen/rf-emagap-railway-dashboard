@@ -75,7 +75,7 @@ def raw_webhook_request(body_text):
 
 class PortfolioGateTest(unittest.TestCase):
 
-    def test_rebalance_card_excludes_open_positions_outside_recommendation_but_gate_keeps_them(self):
+    def test_rebalance_card_requires_matching_strategy_sleeve_but_gate_keeps_everything(self):
         classification = {
             "version": 1, "sleeve": "RF", "sector": "real_estate",
             "allocation_pct": 5, "position_strategy": "RF Stock MTF",
@@ -92,9 +92,26 @@ class PortfolioGateTest(unittest.TestCase):
         self.assertEqual(all_open["total_exposure_pct"], 15)
         self.assertEqual(len(all_open["positions"]), 3)
         self.assertTrue(recommended["available"])
-        self.assertEqual(recommended["total_exposure_pct"], 5)
-        self.assertEqual([row["ticker"] for row in recommended["positions"]], ["DCM"])
-        self.assertEqual({row["ticker"] for row in recommended["excluded_positions"]}, {"SZC", "CSV"})
+        self.assertEqual(recommended["total_exposure_pct"], 0)
+        self.assertEqual(recommended["positions"], [])
+        self.assertEqual({row["ticker"] for row in recommended["excluded_positions"]}, {"SZC", "DCM", "CSV"})
+
+    def test_rebalance_card_allows_same_ticker_only_in_its_own_strategy_list(self):
+        rf = {"version": 1, "sleeve": "RF", "sector": "banking", "allocation_pct": 5,
+              "position_strategy": "RF Stock MTF"}
+        ema = {"version": 1, "sleeve": "EMA", "sector": "banking", "allocation_pct": 5,
+               "position_strategy": "Modern Stock EMA Gap Layer"}
+        state = portfolio_gate_state([
+            stored_signal(signal_id=1, ticker="MBB", strategy="RF Stock MTF", action="buy", classification=rf),
+            stored_signal(signal_id=2, ticker="MBB", strategy="Modern Stock EMA Gap Layer", action="buy", classification=ema),
+        ])
+        result = rebalance_recommended_state(state, {"summary": {"attention_lists": {
+            "rf": {"rows": [{"ticker": "MBB", "rank": 2}]},
+            "ema": {"rows": [{"ticker": "VCB", "rank": 1}]},
+        }}})
+        self.assertEqual(result["total_exposure_pct"], 5)
+        self.assertEqual([(p["ticker"], p["sleeve"]) for p in result["positions"]], [("MBB", "RF")])
+        self.assertEqual([(p["ticker"], p["sleeve"]) for p in result["excluded_positions"]], [("MBB", "EMA")])
 
     def test_unparseable_authenticated_webhook_is_logged_without_http_422(self):
         with tempfile.TemporaryDirectory() as temp_dir:

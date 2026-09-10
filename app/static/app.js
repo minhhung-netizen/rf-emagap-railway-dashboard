@@ -3646,22 +3646,29 @@ function rebalanceTicker(value) {
   return String(value || "").trim().toUpperCase().split(":").pop();
 }
 
-function rebalanceRecommendationForTicker(ticker) {
-  const summary = state.portfolioBacktest?.summary || {};
-  const lists = summary.attention_lists || {};
-  const candidates = [
-    { sleeve: "RF", attention: lists.rf },
-    { sleeve: "EMA", attention: lists.ema || summary.attention_list },
-  ].filter(({ attention }) => attention && Array.isArray(attention.rows));
-  const target = rebalanceTicker(ticker);
-  const matches = candidates.flatMap(({ sleeve, attention }) => attention.rows
-    .filter((row) => rebalanceTicker(row.ticker || row.symbol) === target)
-    .map((row) => ({ sleeve, attention, row })));
-  return { hasSnapshot: candidates.length > 0, matches };
+function rebalanceSleeveForStrategy(strategy) {
+  const value = String(strategy || "").trim().toLowerCase();
+  if (value.includes("ema")) return "EMA";
+  if (value.includes("rf")) return "RF";
+  return "";
 }
 
-function rebalanceRankLabel(ticker) {
-  const comparison = rebalanceRecommendationForTicker(ticker);
+function rebalanceRecommendationForTicker(ticker, strategy) {
+  const summary = state.portfolioBacktest?.summary || {};
+  const lists = summary.attention_lists || {};
+  const sleeve = rebalanceSleeveForStrategy(strategy);
+  // attention_list is the RF-only legacy schema; never infer it as EMA.
+  const attention = sleeve === "RF" ? (lists.rf || summary.attention_list) : lists.ema;
+  const hasSnapshot = Boolean(attention && Array.isArray(attention.rows));
+  const target = rebalanceTicker(ticker);
+  const matches = hasSnapshot ? attention.rows
+    .filter((row) => rebalanceTicker(row.ticker || row.symbol) === target)
+    .map((row) => ({ sleeve, attention, row })) : [];
+  return { hasSnapshot, sleeve, matches };
+}
+
+function rebalanceRankLabel(ticker, strategy) {
+  const comparison = rebalanceRecommendationForTicker(ticker, strategy);
   if (!comparison.hasSnapshot) return "-";
   if (!comparison.matches.length) return "Ngoài top";
   return comparison.matches.map(({ sleeve, row }) => {
@@ -3670,10 +3677,11 @@ function rebalanceRankLabel(ticker) {
   }).join(" · ");
 }
 
-function renderRebalanceRecommendation(ticker) {
-  const comparison = rebalanceRecommendationForTicker(ticker);
+function renderRebalanceRecommendation(ticker, strategy) {
+  const comparison = rebalanceRecommendationForTicker(ticker, strategy);
   if (!comparison.hasSnapshot) {
-    return '<span class="rebalanceBadge neutral">Chưa có snapshot</span>';
+    const scope = comparison.sleeve || "chiến lược";
+    return `<span class="rebalanceBadge neutral">Chưa có snapshot ${escapeHtml(scope)}</span>`;
   }
   if (!comparison.matches.length) {
     return '<span class="rebalanceBadge outside">Ngoài danh mục khuyến nghị</span>';
@@ -4410,21 +4418,32 @@ function updateOpenPositionSectorFilterOptions(openTrades) {
   els.openPositionSectorFilter.value = sectors.includes(currentValue) ? currentValue : "";
 }
 
-function rebalancePerformanceTickers() {
+function rebalancePerformancePositions() {
   const summary = state.portfolioBacktest?.summary || {};
   const lists = summary.attention_lists || {};
-  const candidates = [lists.rf, lists.ema, summary.attention_list];
-  const tickers = new Set();
+  const candidates = [
+    ["RF", lists.rf || summary.attention_list],
+    ["EMA", lists.ema],
+  ];
+  const positions = new Set();
   let hasRecommendation = false;
-  candidates.forEach((list) => {
+  candidates.forEach(([sleeve, list]) => {
     if (!list || !Array.isArray(list.rows)) return;
     hasRecommendation = true;
     list.rows.forEach((row) => {
       const ticker = rebalanceTicker(row?.ticker || row?.symbol);
-      if (ticker) tickers.add(ticker);
+      if (ticker) positions.add(`${ticker}::${sleeve}`);
     });
   });
-  return hasRecommendation ? tickers : null;
+  return hasRecommendation ? positions : null;
+}
+
+function isInMatchingRebalancePosition(item) {
+  const positions = rebalancePerformancePositions();
+  if (!positions) return false;
+  const ticker = rebalanceTicker(item?.ticker);
+  const sleeve = rebalanceSleeveForStrategy(item?.strategy);
+  return Boolean(ticker && sleeve && positions.has(`${ticker}::${sleeve}`));
 }
 
 function isRebalancePerformanceScope() {
@@ -4433,16 +4452,12 @@ function isRebalancePerformanceScope() {
 
 function scopedPerformanceStrategies() {
   if (!isRebalancePerformanceScope()) return state.performanceStrategies;
-  const tickers = rebalancePerformanceTickers();
-  if (!tickers) return [];
-  return state.performanceStrategies.filter((row) => tickers.has(String(row.ticker || "").toUpperCase()));
+  return state.performanceStrategies.filter(isInMatchingRebalancePosition);
 }
 
 function scopedPerformanceClosedTrades() {
   if (!isRebalancePerformanceScope()) return state.performanceClosedTrades;
-  const tickers = rebalancePerformanceTickers();
-  if (!tickers) return [];
-  return state.performanceClosedTrades.filter((trade) => tickers.has(String(trade.ticker || "").toUpperCase()));
+  return state.performanceClosedTrades.filter(isInMatchingRebalancePosition);
 }
 
 function renderSignalPerformanceScopeNote() {
@@ -4451,12 +4466,12 @@ function renderSignalPerformanceScopeNote() {
     els.performanceScopeNote.textContent = "Bao gồm tất cả tín hiệu đã đi qua Portfolio Gate trong phạm vi bộ lọc hiện tại.";
     return;
   }
-  const tickers = rebalancePerformanceTickers();
-  if (!tickers) {
+  const positions = rebalancePerformancePositions();
+  if (!positions) {
     els.performanceScopeNote.textContent = "Chưa có danh sách rebalance hợp lệ, nên không thể tách nhóm này.";
     return;
   }
-  els.performanceScopeNote.textContent = `Chỉ gồm ${tickers.size} mã trong danh sách rebalance mới nhất. Đây là phân loại theo snapshot hiện tại, không thay thế lịch sử danh mục tại ngày vào lệnh.`;
+  els.performanceScopeNote.textContent = `Chỉ gồm ${positions.size} cặp mã/chiến lược khớp danh sách rebalance mới nhất. Đây là phân loại theo snapshot hiện tại, không thay thế lịch sử danh mục tại ngày vào lệnh.`;
 }
 
 function renderScopedSignalPerformance() {
@@ -5184,8 +5199,8 @@ function renderOpenPositions() {
         <td><strong class="${tickerClass}" title="${escapeHtml(confirmTitle)}">${escapeHtml(trade.ticker)}</strong></td>
         <td><strong>${escapeHtml(displayStrategyName(trade.strategy))}</strong></td>
         <td>${escapeHtml(sectorForTicker(trade.ticker) || "-")}</td>
-        <td>${escapeHtml(rebalanceRankLabel(trade.ticker))}</td>
-        <td>${renderRebalanceRecommendation(trade.ticker)}</td>
+        <td>${escapeHtml(rebalanceRankLabel(trade.ticker, trade.strategy))}</td>
+        <td>${renderRebalanceRecommendation(trade.ticker, trade.strategy)}</td>
         <td>${escapeHtml(trade.timeframe || "-")}</td>
         <td>${formatPrice(trade.entry_price)}</td>
         <td>${formatPrice(trade.exit_price)}</td>
@@ -5236,10 +5251,10 @@ function renderOpenPositions() {
           <div><span>${escapeHtml(t("currentShort"))}</span><strong>${formatPrice(trade.exit_price)}</strong></div>
           <div><span>${escapeHtml(t("allocationWeight"))}</span><strong>${formatKellyPercent(weightPct)}</strong></div>
           <div><span>${escapeHtml(t("portfolioPl"))}</span><strong>${formatSignedPercent(allocatedPl)}</strong></div>
-          <div><span>Hạng rebalance</span><strong>${escapeHtml(rebalanceRankLabel(trade.ticker))}</strong></div>
+          <div><span>Hạng rebalance</span><strong>${escapeHtml(rebalanceRankLabel(trade.ticker, trade.strategy))}</strong></div>
           <div><span>${escapeHtml(t("daysShort"))}</span><strong>${formatHoldingDaysBetween(trade.entry_time)}</strong></div>
         </div>
-        <div class="positionCardRebalance">${renderRebalanceRecommendation(trade.ticker)}</div>
+        <div class="positionCardRebalance">${renderRebalanceRecommendation(trade.ticker, trade.strategy)}</div>
         <div class="positionCardSignal">
           ${signals.length
             ? `<span class="confirmBadge">${escapeHtml(t("confirmedStatus"))}</span>`

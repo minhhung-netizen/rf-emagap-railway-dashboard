@@ -18,14 +18,14 @@ Local RF + EMA backtest -- BACKTEST_INGEST_TOKEN --> /api/portfolio-backtests/im
 ```
 
 The Portfolio Gate monitor distinguishes two exposures: **rebalance-recommended
-exposure** counts only open positions whose ticker appears in the latest RF or
-EMA recommendation list; **active gate exposure** counts every open gate
+exposure** counts only open positions whose ticker appears in the latest list
+for that position's own RF or EMA strategy; **active gate exposure** counts every open gate
 position for hard caps. A holding outside the latest recommendation is therefore
 not presented as currently recommended, but it still consumes the gate's ticker,
 sector, sleeve, and total-exposure limits until its sell signal is received.
 
 In **Performance**, the signal report can be switched between all gate signals
-and tickers in the latest rebalance. The switch changes its metrics, equity
+and matching ticker/strategy pairs in the latest rebalance. The switch changes its metrics, equity
 curve, strategy rows, and closed-trade history together. The rebalance scope is
 intentionally labelled as current-snapshot membership; it is not a historical
 reconstruction of which list contained a ticker on the original entry date.
