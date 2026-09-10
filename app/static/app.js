@@ -299,6 +299,7 @@ const STRATEGY_DISPLAY_ALIASES = {
   stxanhdo: "ST",
   "mordern stock ema": "MSE",
   "modern stock ema": "MSE",
+  "modern stock ema gap layer": "EMA Daily",
 };
 let dcaInitialCapitalSaveTimer = null;
 const FEATURE_LABELS = {
