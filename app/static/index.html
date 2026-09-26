@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RF + EMA Portfolio Gate</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/styles.css?v=20260926-leading-signals-4" />
-    <link rel="stylesheet" href="/static/fund-analytics.css?v=1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260926-admin-tabs-1" />
+    <link rel="stylesheet" href="/static/fund-analytics.css?v=2" />
   </head>
   <body>
     <div id="loginScreen" class="loginScreen">
@@ -1349,23 +1349,6 @@
       </div>
 
       <div class="tabPanel" data-tab-panel="logs">
-        <section class="exportPanel adminOnly">
-          <div class="panelHead">
-            <div>
-              <p class="eyebrow" data-i18n="exportBackup">Export / Backup</p>
-              <h2 data-i18n="downloadData">Download Data</h2>
-            </div>
-            <div class="exportActions">
-              <a class="smallButton linkButton" href="/api/export/signals.csv" data-i18n="exportSignals">Signals CSV</a>
-              <a class="smallButton linkButton" href="/api/export/manual-portfolio.csv" data-i18n="exportManualPortfolio">Manual CSV</a>
-              <a class="smallButton linkButton" href="/api/export/manual-daily-performance.csv" data-i18n="exportDailyPerformance">Daily CSV</a>
-              <a class="smallButton linkButton" href="/api/export/dividend-events.csv" data-i18n="exportDividends">Dividends CSV</a>
-              <a class="smallButton linkButton" href="/api/export/derivative-signals.csv" data-i18n="exportDerivatives">Derivatives CSV</a>
-              <a class="smallButton linkButton" href="/api/export/database" data-i18n="backupDatabase">Backup DB</a>
-            </div>
-          </div>
-        </section>
-
         <section class="invalidSignalsPanel">
           <div class="panelHead">
             <div>
@@ -1392,67 +1375,112 @@
       </div>
 
       <div class="tabPanel" data-tab-panel="admin">
-        <section id="tradeLedgerPanel" class="fundPanel adminOnly"></section>
-        <section id="fundAdminPanel" class="fundPanel adminOnly"></section>
-        <section class="adminPanel">
-          <div class="panelHead">
-            <div>
-              <p class="eyebrow">Quản trị</p>
-              <h2>Tài khoản và quyền hiển thị</h2>
-            </div>
-          </div>
-          <form id="userCreateForm" class="userCreateForm">
-            <input id="newUsername" required autocomplete="off" placeholder="Tên tài khoản" />
-            <input id="newPassword" required type="password" minlength="8" autocomplete="new-password" placeholder="Mật khẩu tối thiểu 8 ký tự" />
-            <select id="newUserRole" aria-label="Vai trò">
-              <option value="user">User chỉ xem</option>
-              <option value="admin">Admin</option>
-            </select>
-            <div id="newUserFeatures" class="featureSelector"></div>
-            <div id="newUserStrategies" class="strategySelector"></div>
-            <button type="submit">Tạo tài khoản</button>
-          </form>
-          <div class="tableWrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Tài khoản</th>
-                  <th>Vai trò</th>
-                  <th>Tính năng được xem</th>
-                  <th>Chiến lược được xem</th>
-                  <th>Trạng thái</th>
-                  <th>Mật khẩu mới</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="usersTable"></tbody>
-            </table>
-          </div>
-        </section>
-        <section class="adminPanel">
-          <div class="panelHead">
+        <section class="adminWorkspace adminOnly" aria-labelledby="adminWorkspaceTitle">
+          <div class="adminWorkspaceHeading">
             <div>
               <p class="eyebrow">Quản trị danh mục</p>
-              <h2>Phân loại ngành</h2>
-              <p class="panelNote">Ngành được dùng trực tiếp khi Portfolio Gate kiểm tra trần theo ngành. Chỉnh tay luôn được ưu tiên hơn dữ liệu tự động.</p>
+              <h2 id="adminWorkspaceTitle">Thiết lập và kiểm soát dữ liệu</h2>
             </div>
-            <div class="panelActions">
-              <span id="sectorRefreshStatus" class="mutedText"></span>
-              <button id="refreshSectorsButton" class="smallButton" type="button">Tự điền từ VNStock</button>
-            </div>
+            <p>Chọn một nhóm công việc để tập trung kiểm tra, nhập liệu và lưu thay đổi.</p>
           </div>
-          <form id="sectorForm" class="userCreateForm" autocomplete="off">
-            <input id="sectorTicker" required autocapitalize="characters" spellcheck="false" placeholder="Mã, ví dụ VPB" />
-            <input id="sectorName" required list="sectorNameOptions" placeholder="Ngành" />
-            <datalist id="sectorNameOptions"></datalist>
-            <button type="submit">Lưu phân loại</button>
-            <input id="sectorSearch" type="search" placeholder="Lọc mã hoặc ngành" />
-          </form>
-          <div class="tableWrap">
-            <table>
-              <thead><tr><th>Mã</th><th>Ngành</th><th>Nguồn</th><th>Cập nhật</th><th></th></tr></thead>
-              <tbody id="sectorTable"></tbody>
-            </table>
+
+          <div class="adminTabs" role="tablist" aria-label="Nhóm chức năng quản trị">
+            <button id="admin-tab-ledger" class="adminTabButton active" type="button" role="tab" aria-selected="true" aria-controls="admin-panel-ledger" tabindex="0" data-admin-tab-target="ledger">Sổ giao dịch</button>
+            <button id="admin-tab-nav" class="adminTabButton" type="button" role="tab" aria-selected="false" aria-controls="admin-panel-nav" tabindex="-1" data-admin-tab-target="nav">NAV cuối ngày</button>
+            <button id="admin-tab-risk" class="adminTabButton" type="button" role="tab" aria-selected="false" aria-controls="admin-panel-risk" tabindex="-1" data-admin-tab-target="risk">Chính sách rủi ro</button>
+            <button id="admin-tab-data" class="adminTabButton" type="button" role="tab" aria-selected="false" aria-controls="admin-panel-data" tabindex="-1" data-admin-tab-target="data">Dữ liệu &amp; sao lưu</button>
+            <button id="admin-tab-users" class="adminTabButton" type="button" role="tab" aria-selected="false" aria-controls="admin-panel-users" tabindex="-1" data-admin-tab-target="users">Người dùng</button>
+            <button id="admin-tab-sectors" class="adminTabButton" type="button" role="tab" aria-selected="false" aria-controls="admin-panel-sectors" tabindex="-1" data-admin-tab-target="sectors">Nhóm ngành</button>
+          </div>
+
+          <div id="admin-panel-ledger" class="adminTabPanel active" role="tabpanel" aria-labelledby="admin-tab-ledger" data-admin-tab-panel="ledger">
+            <section id="tradeLedgerPanel" class="fundPanel"></section>
+          </div>
+
+          <div id="admin-panel-nav" class="adminTabPanel" role="tabpanel" aria-labelledby="admin-tab-nav" data-admin-tab-panel="nav" hidden>
+            <section id="fundNavAdminPanel" class="fundPanel"></section>
+          </div>
+
+          <div id="admin-panel-risk" class="adminTabPanel" role="tabpanel" aria-labelledby="admin-tab-risk" data-admin-tab-panel="risk" hidden>
+            <section id="fundRiskAdminPanel" class="fundPanel"></section>
+          </div>
+
+          <div id="admin-panel-data" class="adminTabPanel" role="tabpanel" aria-labelledby="admin-tab-data" data-admin-tab-panel="data" hidden>
+            <section id="fundDataAdminPanel" class="fundPanel"></section>
+            <section class="exportPanel">
+              <div class="panelHead">
+                <div>
+                  <p class="eyebrow" data-i18n="exportBackup">Export / Backup</p>
+                  <h2 data-i18n="downloadData">Download Data</h2>
+                </div>
+                <div class="exportActions">
+                  <a class="smallButton linkButton" href="/api/export/signals.csv" data-i18n="exportSignals">Signals CSV</a>
+                  <a class="smallButton linkButton" href="/api/export/manual-portfolio.csv" data-i18n="exportManualPortfolio">Manual CSV</a>
+                  <a class="smallButton linkButton" href="/api/export/manual-daily-performance.csv" data-i18n="exportDailyPerformance">Daily CSV</a>
+                  <a class="smallButton linkButton" href="/api/export/dividend-events.csv" data-i18n="exportDividends">Dividends CSV</a>
+                  <a class="smallButton linkButton" href="/api/export/derivative-signals.csv" data-i18n="exportDerivatives">Derivatives CSV</a>
+                  <a class="smallButton linkButton" href="/api/export/database" data-i18n="backupDatabase">Backup DB</a>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="admin-panel-users" class="adminTabPanel" role="tabpanel" aria-labelledby="admin-tab-users" data-admin-tab-panel="users" hidden>
+            <section class="adminPanel">
+              <div class="panelHead">
+                <div>
+                  <p class="eyebrow">Quản trị</p>
+                  <h2>Tài khoản và quyền hiển thị</h2>
+                </div>
+              </div>
+              <form id="userCreateForm" class="userCreateForm">
+                <label>Tên tài khoản<input id="newUsername" required autocomplete="off" /></label>
+                <label>Mật khẩu<span class="formHint">Tối thiểu 8 ký tự</span><input id="newPassword" required type="password" minlength="8" autocomplete="new-password" /></label>
+                <label>Vai trò<select id="newUserRole"><option value="user">User chỉ xem</option><option value="admin">Admin</option></select></label>
+                <div><span class="formFieldLabel">Tính năng được xem</span><div id="newUserFeatures" class="featureSelector"></div></div>
+                <div><span class="formFieldLabel">Chiến lược được xem</span><div id="newUserStrategies" class="strategySelector"></div></div>
+                <button type="submit">Tạo tài khoản</button>
+              </form>
+              <div class="tableWrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Tài khoản</th><th>Vai trò</th><th>Tính năng được xem</th><th>Chiến lược được xem</th><th>Trạng thái</th><th>Mật khẩu mới</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="usersTable"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <div id="admin-panel-sectors" class="adminTabPanel" role="tabpanel" aria-labelledby="admin-tab-sectors" data-admin-tab-panel="sectors" hidden>
+            <section class="adminPanel">
+              <div class="panelHead">
+                <div>
+                  <p class="eyebrow">Quản trị danh mục</p>
+                  <h2>Phân loại ngành</h2>
+                  <p class="panelNote">Ngành được dùng trực tiếp khi Portfolio Gate kiểm tra trần theo ngành. Chỉnh tay luôn được ưu tiên hơn dữ liệu tự động.</p>
+                </div>
+                <div class="panelActions">
+                  <span id="sectorRefreshStatus" class="mutedText"></span>
+                  <button id="refreshSectorsButton" class="smallButton" type="button">Tự điền từ VNStock</button>
+                </div>
+              </div>
+              <form id="sectorForm" class="sectorForm" autocomplete="off">
+                <label>Mã cổ phiếu<input id="sectorTicker" required autocapitalize="characters" spellcheck="false" placeholder="Ví dụ VPB" /></label>
+                <label>Ngành<input id="sectorName" required list="sectorNameOptions" /></label>
+                <datalist id="sectorNameOptions"></datalist>
+                <button type="submit">Lưu phân loại</button>
+                <label class="sectorSearchLabel">Lọc danh sách<input id="sectorSearch" type="search" placeholder="Mã hoặc ngành" /></label>
+              </form>
+              <div class="tableWrap">
+                <table>
+                  <thead><tr><th>Mã</th><th>Ngành</th><th>Nguồn</th><th>Cập nhật</th><th></th></tr></thead>
+                  <tbody id="sectorTable"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </section>
       </div>

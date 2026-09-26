@@ -197,6 +197,8 @@ const els = {
   themeToggle: document.querySelector("#themeToggle"),
   tabButtons: document.querySelectorAll("[data-tab-target]"),
   tabPanels: document.querySelectorAll("[data-tab-panel]"),
+  adminTabButtons: document.querySelectorAll("[data-admin-tab-target]"),
+  adminTabPanels: document.querySelectorAll("[data-admin-tab-panel]"),
   refresh: document.querySelector("#refreshButton"),
   chartTitle: document.querySelector("#chartTitle"),
   lastUpdated: document.querySelector("#lastUpdated"),
@@ -1398,6 +1400,10 @@ Object.assign(translations.vi, {
   winningTrades: "Giao dịch thắng",
 });
 
+function adminTabFromHash() {
+  return /^#admin\/([a-z]+)$/.exec(window.location.hash)?.[1] || "";
+}
+
 const state = {
   user: null,
   availableFeatures: Object.keys(FEATURE_LABELS),
@@ -1405,7 +1411,8 @@ const state = {
   users: [],
   language: localStorage.getItem("dashboardLanguage") || "vi",
   theme: localStorage.getItem("dashboardTheme") || "light",
-  activeTab: localStorage.getItem("dashboardActiveTab") || "overview",
+  activeTab: adminTabFromHash() ? "admin" : localStorage.getItem("dashboardActiveTab") || "overview",
+  activeAdminTab: adminTabFromHash() || localStorage.getItem("dashboardActiveAdminTab") || "ledger",
   selectedTicker: "",
   watchlist: loadWatchlist(),
   watchlistOnly: localStorage.getItem("dashboardWatchlistOnly") === "true",
@@ -2876,6 +2883,9 @@ function setActiveTab(tabName) {
   }
   state.activeTab = tabName;
   localStorage.setItem("dashboardActiveTab", tabName);
+  if (tabName !== "admin" && adminTabFromHash()) {
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  }
   els.tabButtons.forEach((button) => {
     const active = button.dataset.tabTarget === tabName;
     button.classList.toggle("active", active);
@@ -2884,6 +2894,9 @@ function setActiveTab(tabName) {
   els.tabPanels.forEach((panel) => {
     panel.classList.toggle("active", panel.dataset.tabPanel === tabName);
   });
+  if (tabName === "admin") {
+    setActiveAdminTab(state.activeAdminTab);
+  }
   if (tabName === "overview" && state.selectedTicker) {
     renderChart(state.selectedTicker);
   }
@@ -2895,6 +2908,36 @@ function setActiveTab(tabName) {
   }
   if (tabName === "derivatives") {
     drawDerivativeEquityCurve(state.derivatives.equity_curve || []);
+  }
+}
+
+function setActiveAdminTab(tabName, { focus = false } = {}) {
+  const activeButton = [...els.adminTabButtons].find(
+    (button) => button.dataset.adminTabTarget === tabName
+  );
+  if (!activeButton) {
+    tabName = els.adminTabButtons[0]?.dataset.adminTabTarget || "ledger";
+  }
+  state.activeAdminTab = tabName;
+  localStorage.setItem("dashboardActiveAdminTab", tabName);
+  if (state.activeTab === "admin") {
+    window.history.replaceState(null, "", `#admin/${tabName}`);
+  }
+  els.adminTabButtons.forEach((button) => {
+    const active = button.dataset.adminTabTarget === tabName;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  els.adminTabPanels.forEach((panel) => {
+    const active = panel.dataset.adminTabPanel === tabName;
+    panel.classList.toggle("active", active);
+    panel.hidden = !active;
+  });
+  if (focus) {
+    [...els.adminTabButtons].find(
+      (button) => button.dataset.adminTabTarget === tabName
+    )?.focus();
   }
 }
 
@@ -6949,6 +6992,20 @@ els.themeToggle.addEventListener("click", () => {
 });
 els.tabButtons.forEach((button) => {
   button.addEventListener("click", () => setActiveTab(button.dataset.tabTarget));
+});
+els.adminTabButtons.forEach((button, index) => {
+  button.addEventListener("click", () => setActiveAdminTab(button.dataset.adminTabTarget));
+  button.addEventListener("keydown", (event) => {
+    const buttons = [...els.adminTabButtons];
+    let nextIndex = index;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % buttons.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + buttons.length) % buttons.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = buttons.length - 1;
+    else return;
+    event.preventDefault();
+    setActiveAdminTab(buttons[nextIndex].dataset.adminTabTarget, { focus: true });
+  });
 });
 els.watchlistInput.addEventListener("change", updateWatchlistFromInput);
 els.watchlistInput.addEventListener("keydown", (event) => {

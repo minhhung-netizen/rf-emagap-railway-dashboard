@@ -170,6 +170,81 @@ body {
   overflow: hidden;
 }
 
+.adminWorkspace {
+  display: grid;
+  gap: 14px;
+}
+
+.adminWorkspaceHeading {
+  align-items: end;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 2px 2px 14px;
+}
+
+.adminWorkspaceHeading h2 {
+  margin: 3px 0 0;
+}
+
+.adminWorkspaceHeading > p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+  max-width: 480px;
+}
+
+.adminTabs {
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 0 0 8px;
+  scrollbar-width: thin;
+}
+
+.adminTabButton {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 13px;
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.adminTabButton:hover {
+  background: var(--field-hover);
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.adminTabButton.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--field));
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  color: var(--accent);
+}
+
+.adminTabPanel {
+  min-width: 0;
+}
+
+.adminTabPanel[hidden] {
+  display: none;
+}
+
+.adminTabPanel > .adminPanel,
+.adminTabPanel > .exportPanel,
+.adminTabPanel > .fundPanel {
+  margin: 0;
+}
+
+.adminTabPanel > .fundPanel + .exportPanel {
+  margin-top: 14px;
+}
+
 .userCreateForm {
   align-items: start;
   border-bottom: 1px solid var(--line);
@@ -179,9 +254,57 @@ body {
   padding: 14px 16px;
 }
 
+.userCreateForm > label,
+.sectorForm > label {
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  font-weight: 650;
+  gap: 6px;
+}
+
+.formFieldLabel,
+.formHint {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+  margin-bottom: 6px;
+}
+
+.formHint {
+  font-size: 11px;
+  font-weight: 500;
+  margin: -2px 0 0;
+}
+
 .userCreateForm input {
   max-width: none;
   text-transform: none;
+}
+
+.userCreateForm > button,
+.sectorForm > button {
+  align-self: end;
+  min-height: 38px;
+}
+
+.sectorForm {
+  align-items: end;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 170px minmax(220px, 1fr) auto minmax(220px, 1fr);
+  padding: 14px 16px;
+}
+
+.sectorForm input {
+  max-width: none;
+  text-transform: none;
+}
+
+.sectorSearchLabel {
+  grid-column: 4;
 }
 
 .featureSelector,
@@ -2443,7 +2566,8 @@ td strong {
     grid-column: 1 / -1;
   }
 
-  .userCreateForm {
+  .userCreateForm,
+  .sectorForm {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -2648,6 +2772,30 @@ td strong {
 
   .userCreateForm {
     grid-template-columns: 1fr;
+  }
+
+  .sectorForm {
+    grid-template-columns: 1fr;
+  }
+
+  .sectorSearchLabel {
+    grid-column: auto;
+  }
+
+  .adminWorkspaceHeading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .adminTabs {
+    gap: 6px;
+    margin: 0 -2px;
+    padding-bottom: 10px;
+  }
+
+  .adminTabButton {
+    min-height: 44px;
+    padding: 0 14px;
   }
 
   .tabs {
