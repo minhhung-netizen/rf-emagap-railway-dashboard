@@ -25,6 +25,8 @@ const els = {
   userAttentionList: document.querySelector("#userAttentionList"),
   table: document.querySelector("#signalsTable"),
   signalCards: document.querySelector("#signalCards"),
+  leadingSignalStatus: document.querySelector("#leadingSignalStatus"),
+  leadingSignalsTable: document.querySelector("#leadingSignalsTable"),
   openPositionsTable: document.querySelector("#openPositionsTable"),
   openPositionCards: document.querySelector("#openPositionCards"),
   closedTradesTable: document.querySelector("#closedTradesTable"),
@@ -1403,6 +1405,7 @@ const state = {
   watchlistOnly: localStorage.getItem("dashboardWatchlistOnly") === "true",
   recentTradeBannerHidden: localStorage.getItem("dashboardRecentTradeBannerHidden") === "true",
   signals: [],
+  leadingSignals: [],
   openTrades: [],
   closedTrades: [],
   performanceClosedTrades: [],
@@ -3195,6 +3198,7 @@ async function refresh() {
       dividend_alerts: [],
     }),
     featureFetch("positions", "/api/sectors", { sectors: [], sector_names: [] }),
+    featureFetch("overview", "/api/leading-signals", { leading_signals: [], summary: {} }),
   ]);
 
   const settingsPayload = settledPayload(
@@ -3240,11 +3244,18 @@ async function refresh() {
     "dividend events"
   );
   const sectorPayload = settledPayload(results[9], { sectors: [], sector_names: [] }, "sectors");
+  const leadingPayload = settledPayload(
+    results[10],
+    { leading_signals: state.leadingSignals, summary: {} },
+    "leading signals"
+  );
 
   state.defaultSignalWeightPct = Number(settingsPayload.default_signal_weight_pct) || FALLBACK_SIGNAL_WEIGHT_PCT;
   state.summary = summary;
   state.signals = filterSignalsForWatchlist(signalsPayload.signals || []);
   renderSignals();
+  state.leadingSignals = filterSignalsForWatchlist(leadingPayload.leading_signals || []);
+  renderLeadingSignals(leadingPayload.summary || {});
   state.portfolioBacktest = portfolioBacktestPayload.backtest || null;
   state.portfolioGate = portfolioGatePayload;
   state.sectors = sectorPayload.sectors || [];
@@ -5440,7 +5451,14 @@ function sectorForTicker(ticker) {
 }
 
 function positionSignals(trade) {
-  const confirmations = [...(trade.confirmations || [])];
+  const confirmations = [
+    ...(trade.leading_signals || []).map((signal) => ({
+      ...signal,
+      strategy: leadingEventLabel(signal.event || signal.action),
+      detail: `${Number(signal.lead_days || 0).toLocaleString(NUMBER_FORMAT_LOCALE, { maximumFractionDigits: 2 })} ngày trước lệnh mua`,
+    })),
+    ...(trade.confirmations || []),
+  ];
   const avgLossSignal = averageLossSignalForTrade(trade);
   if (avgLossSignal) {
     confirmations.push({
@@ -5474,10 +5492,12 @@ function renderConfirmations(confirmations) {
         .map((confirmation) => {
           const isAvgLoss = confirmation.action === "avg_loss";
           const isAvgGain = confirmation.action === "avg_gain";
+          const isLeadingBull = String(confirmation.action || "").endsWith("_bull");
+          const isLeadingBear = String(confirmation.action || "").endsWith("_bear");
           return `
-          <span class="confirmBadge ${isAvgLoss ? "avgLossBadge" : ""} ${isAvgGain ? "avgGainBadge" : ""}" title="${escapeHtml(formatDate(confirmation.time))}">
+          <span class="confirmBadge ${isAvgLoss ? "avgLossBadge" : ""} ${isAvgGain ? "avgGainBadge" : ""} ${isLeadingBull ? "leadingBullBadge" : ""} ${isLeadingBear ? "leadingBearBadge" : ""}" title="${escapeHtml(formatDate(confirmation.time))}">
             ${escapeHtml(displayStrategyName(confirmation.strategy) || confirmation.action || "-")}
-            <small>${isAvgLoss || isAvgGain
+            <small>${isAvgLoss || isAvgGain || isLeadingBull || isLeadingBear
               ? confirmation.detail
               : `${escapeHtml(formatPrice(confirmation.price))} · ${escapeHtml(formatDateOnly(confirmation.time))}`}</small>
           </span>
@@ -6121,6 +6141,67 @@ function summarizeSignals(signals) {
   };
 }
 
+function renderLeadingSignals(summary = {}) {
+  const rows = state.leadingSignals || [];
+  if (els.leadingSignalStatus) {
+    const active = Number(summary.active) || rows.filter((row) => row.status === "active").length;
+    const matched = Number(summary.matched) || rows.filter((row) => String(row.status).startsWith("matched")).length;
+    els.leadingSignalStatus.textContent = `${active} đang chờ · ${matched} đã khớp RF/EMA`;
+  }
+  if (!els.leadingSignalsTable) return;
+  if (!rows.length) {
+    els.leadingSignalsTable.innerHTML = '<tr><td class="empty" colspan="9">Chưa có tín hiệu sớm từ Inertial RSI.</td></tr>';
+    return;
+  }
+  els.leadingSignalsTable.innerHTML = rows.map((row) => {
+    const action = String(row.action || "").toLowerCase();
+    const direction = action.endsWith("_bull") ? "bull" : "bear";
+    const status = leadingSignalStatus(row);
+    const lead = Number.isFinite(Number(row.lead_days))
+      ? `${Number(row.lead_days).toLocaleString(NUMBER_FORMAT_LOCALE, { maximumFractionDigits: 2 })} ngày`
+      : "-";
+    return `
+      <tr data-leading-ticker="${escapeHtml(row.ticker || "")}">
+        <td><strong>${escapeHtml(row.ticker || "-")}</strong></td>
+        <td><span class="leadingEvent ${direction}">${escapeHtml(leadingEventLabel(row.event || action))}</span></td>
+        <td>${escapeHtml(row.timeframe || "-")}</td>
+        <td>${formatPrice(row.price)}</td>
+        <td>${escapeHtml(formatDateOnly(row.detected_at))}</td>
+        <td>${escapeHtml(formatDateOnly(row.pivot_time))}</td>
+        <td>${escapeHtml(`${row.valid_for_days || 30} ngày`)}</td>
+        <td><span class="statusBadge ${status.className}">${escapeHtml(status.label)}</span></td>
+        <td>${escapeHtml(lead)}</td>
+      </tr>
+    `;
+  }).join("");
+  els.leadingSignalsTable.querySelectorAll("[data-leading-ticker]").forEach((row) => {
+    row.addEventListener("click", () => renderChart(row.dataset.leadingTicker));
+  });
+}
+
+function leadingSignalStatus(row) {
+  const status = String(row?.status || "");
+  if (status === "matched_rf") return { label: "Đã khớp RF", className: "matched" };
+  if (status === "matched_ema") return { label: "Đã khớp EMA", className: "matched" };
+  if (status.startsWith("matched")) return { label: "Đã khớp", className: "matched" };
+  if (status === "expired") return { label: "Hết hạn", className: "neutral" };
+  return { label: "Đang chờ", className: "open" };
+}
+
+function leadingEventLabel(event) {
+  const labels = {
+    bull_divergence: "Phân kỳ tăng",
+    bear_divergence: "Phân kỳ giảm",
+    rsi_cross_oversold: "RSI cắt lên 40",
+    rsi_cross_overbought: "RSI cắt xuống 60",
+    setup_bull: "Thiết lập tăng",
+    setup_bear: "Thiết lập giảm",
+    momentum_bull: "Động lượng tăng",
+    momentum_bear: "Động lượng giảm",
+  };
+  return labels[String(event || "").toLowerCase()] || String(event || "-");
+}
+
 function renderSignals() {
   if (!state.signals.length) {
     els.table.innerHTML = `<tr><td class="empty" colspan="8">${t("noSignals")}</td></tr>`;
@@ -6179,6 +6260,8 @@ function renderSignals() {
 }
 
 function formatSignalGate(signal) {
+  const leading = signal?.payload?.leading_signal;
+  if (leading?.version === 1) return "Tín hiệu sớm · không phân bổ vốn";
   const gate = signal?.payload?.portfolio_gate;
   if (!gate || gate.version !== 1) return "Legacy";
   const allocation = Number(gate.allocation_pct);
@@ -6395,7 +6478,9 @@ function normalizeMarkers(markers) {
       strategy: marker.strategy || "",
       time: marker.source_time || marker.received_at || "",
     }))
-    .filter((marker) => ["buy", "sell"].includes(marker.action));
+    .filter((marker) => [
+      "buy", "sell", "setup_bull", "setup_bear", "momentum_bull", "momentum_bear",
+    ].includes(marker.action));
 }
 
 function drawCandles(rows, markers = [], ticker = "") {
@@ -6520,12 +6605,14 @@ function toSeriesMarkers(markers, rows) {
         : nearestChartTime(availableTimes, requestedTime);
       if (!time) return null;
       const isBuy = marker.action === "buy";
+      const isLeading = marker.action.startsWith("setup_") || marker.action.startsWith("momentum_");
+      const isBull = isBuy || marker.action.endsWith("_bull");
       return {
         time,
-        position: isBuy ? "belowBar" : "aboveBar",
-        color: isBuy ? cssVar("--buy") || "#078465" : cssVar("--sell") || "#c2413a",
-        shape: isBuy ? "arrowUp" : "arrowDown",
-        text: isBuy ? "B" : "S",
+        position: isBull ? "belowBar" : "aboveBar",
+        color: isBull ? cssVar("--buy") || "#078465" : cssVar("--sell") || "#c2413a",
+        shape: isBull ? "arrowUp" : "arrowDown",
+        text: isLeading ? (isBull ? "IRSI+" : "IRSI-") : (isBuy ? "B" : "S"),
       };
     })
     .filter(Boolean)

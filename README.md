@@ -214,6 +214,25 @@ DUPLICATE_WINDOW_MINUTES=5
 
 ## TradingView Alert Body
 
+### Inertial RSI leading signals
+
+`pinescript/inertial_rsi_leading_dashboard.pine` sends bullish/bearish
+divergence and RSI 40/60 momentum events to the dashboard before an RF or EMA
+entry exists. These events are stored as leading signals: they do not open a
+position, consume portfolio exposure, or enter performance calculations.
+
+In TradingView, add the indicator and create one alert with:
+
+- Condition: **Inertial RSI Leading Signals → Any alert() function call**.
+- Webhook URL: `https://your-dashboard-domain/webhook`.
+- Leave the alert message unchanged; the script generates the JSON body.
+- Set **Webhook Secret** in the indicator inputs to the deployed
+  `WEBHOOK_SECRET` value.
+
+The default validity is 30 days. When a gated RF/EMA Buy arrives for the same
+ticker during that window, the dashboard marks the event as matched and shows
+its lead time on the position.
+
 Use this JSON body in the TradingView alert message. If `WEBHOOK_SECRET` is set, keep the same `secret` value here.
 
 ```json

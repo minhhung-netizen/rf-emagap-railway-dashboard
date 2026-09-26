@@ -158,6 +158,37 @@ class PortfolioGateTest(unittest.TestCase):
             self.assertEqual(result["signal"]["price"], 6.9)
             self.assertEqual(result["classification"]["sleeve"], "RF")
 
+    def test_webhook_accepts_leading_signal_without_consuming_exposure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            settings = replace(dashboard_main.settings, webhook_secret="gate-test-secret")
+            with patch.object(dashboard_main, "store", store), patch.object(
+                dashboard_main, "settings", settings
+            ), patch.object(dashboard_main, "enqueue_signal_enrichment"):
+                response = asyncio.run(
+                    dashboard_main.receive_webhook(
+                        webhook_request(
+                            {
+                                "ticker": "HOSE:SSI",
+                                "action": "setup_bull",
+                                "strategy": "Inertial RSI",
+                                "event": "bull_divergence",
+                                "price": 26400,
+                                "timeframe": "D",
+                                "time": "2026-09-01T09:00:00+07:00",
+                                "valid_for_days": 30,
+                                "secret": "gate-test-secret",
+                            }
+                        )
+                    )
+                )
+
+            self.assertEqual(response["status"], "accepted")
+            self.assertFalse(response["classification"]["affects_exposure"])
+            self.assertEqual(response["signal"]["price"], 26.4)
+            self.assertNotIn("secret", response["signal"]["payload"])
+            self.assertEqual(portfolio_gate_state(store.list_all_signals())["positions"], [])
+
     def test_snapshot_guardrails_override_the_defaults(self):
         guardrails = guardrails_from_backtest(
             {

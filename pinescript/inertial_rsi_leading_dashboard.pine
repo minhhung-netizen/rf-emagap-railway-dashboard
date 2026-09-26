@@ -1,0 +1,214 @@
+// This Pine Script(R) code is subject to the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// Original indicator: LuxAlgo. Dashboard leading-signal integration added for this project.
+
+//@version=6
+indicator("Inertial RSI Leading Signals", "IRSI Lead", precision=2, max_lines_count=500, max_labels_count=500)
+
+color BULL_COLOR = #089981
+color BEAR_COLOR = #f23645
+
+grpRsi = "RSI Settings"
+minLenInput = input.int(10, "Minimum Length", minval=2, group=grpRsi)
+maxLenInput = input.int(40, "Maximum Length", minval=2, group=grpRsi)
+smoothInput = input.int(3, "RSI Smoothing", minval=1, group=grpRsi)
+signalLenInput = input.int(14, "Signal Line Length", minval=1, group=grpRsi)
+rsiSourceInput = input.source(hl2, "RSI Source", group=grpRsi)
+obLevelInput = input.float(60, "Overbought Level", minval=50, maxval=100, group=grpRsi)
+osLevelInput = input.float(40, "Oversold Level", minval=0, maxval=50, group=grpRsi)
+
+grpEma = "RSI EMA"
+showEma1Input = input.bool(true, "Show EMA 1", group=grpEma)
+ema1LenInput = input.int(9, "EMA 1 Length", minval=1, group=grpEma)
+ema1ColorInput = input.color(#2196F3, "EMA 1 Color", group=grpEma)
+showEma2Input = input.bool(true, "Show EMA 2", group=grpEma)
+ema2LenInput = input.int(21, "EMA 2 Length", minval=1, group=grpEma)
+ema2ColorInput = input.color(#FF9800, "EMA 2 Color", group=grpEma)
+
+grpDiv = "Divergence"
+showDivergenceInput = input.bool(true, "Enable Divergence", group=grpDiv)
+pivotLeftInput = input.int(5, "Pivot Left", minval=1, group=grpDiv)
+pivotRightInput = input.int(5, "Pivot Right", minval=1, group=grpDiv)
+minPivotDistanceInput = input.int(5, "Minimum Pivot Distance", minval=1, group=grpDiv)
+maxPivotDistanceInput = input.int(100, "Maximum Pivot Distance", minval=2, group=grpDiv)
+showBullDivInput = input.bool(true, "Show Bullish Divergence", group=grpDiv)
+showBearDivInput = input.bool(true, "Show Bearish Divergence", group=grpDiv)
+showRsiDivLineInput = input.bool(true, "Draw DIV Line On RSI", group=grpDiv)
+showPriceDivLineInput = input.bool(true, "Draw DIV Line On Price", group=grpDiv)
+showRsiDivLabelInput = input.bool(true, "Show DIV Label On RSI", group=grpDiv)
+showPriceDivLabelInput = input.bool(true, "Show DIV Label On Price", group=grpDiv)
+bullDivColorInput = input.color(#00C853, "Bullish DIV Color", group=grpDiv)
+bearDivColorInput = input.color(#FF1744, "Bearish DIV Color", group=grpDiv)
+
+grpVisual = "Visuals"
+showFillInput = input.bool(true, "Show Gradient Fill", group=grpVisual)
+showSignalsInput = input.bool(true, "Show Signal Triangles", group=grpVisual)
+bullColorInput = input.color(BULL_COLOR, "Bullish Color", group=grpVisual)
+bearColorInput = input.color(BEAR_COLOR, "Bearish Color", group=grpVisual)
+
+grpDashboard = "Dashboard Webhook"
+sendDashboardAlertsInput = input.bool(true, "Send Dashboard Alerts", group=grpDashboard)
+sendMomentumAlertsInput = input.bool(true, "Send RSI 40/60 Momentum Alerts", group=grpDashboard)
+validForDaysInput = input.int(30, "Signal Validity (days)", minval=1, maxval=180, group=grpDashboard)
+webhookSecretInput = input.string("change-me", "Webhook Secret", group=grpDashboard)
+
+minLen = math.min(minLenInput, maxLenInput)
+maxLen = math.max(minLenInput, maxLenInput)
+minPivotDistance = math.min(minPivotDistanceInput, maxPivotDistanceInput)
+maxPivotDistance = math.max(minPivotDistanceInput, maxPivotDistanceInput)
+
+var float inertialRsi = 50.0
+change = ta.change(rsiSourceInput)
+gain = math.max(change, 0)
+loss = math.max(-change, 0)
+var aRmaGains = array.new_float(maxLen + 1, 0.0)
+var aRmaLosses = array.new_float(maxLen + 1, 0.0)
+bestRsi = 50.0
+minDiff = 1e10
+
+for currentLen = minLen to maxLen
+    prevGain = array.get(aRmaGains, currentLen)
+    prevLoss = array.get(aRmaLosses, currentLen)
+    currGainRma = 0.0
+    currLossRma = 0.0
+    if bar_index < currentLen - 1
+        currGainRma := 0.0
+        currLossRma := 0.0
+    else if bar_index == currentLen - 1
+        sumG = 0.0
+        sumL = 0.0
+        for j = 0 to currentLen - 1
+            sumG += nz(gain[j])
+            sumL += nz(loss[j])
+        currGainRma := sumG / currentLen
+        currLossRma := sumL / currentLen
+    else
+        currGainRma := prevGain + (gain - prevGain) / currentLen
+        currLossRma := prevLoss + (loss - prevLoss) / currentLen
+    array.set(aRmaGains, currentLen, currGainRma)
+    array.set(aRmaLosses, currentLen, currLossRma)
+    if bar_index >= currentLen - 1
+        currentRsi = currLossRma == 0 ? 100.0 : 100.0 - 100.0 / (1.0 + currGainRma / currLossRma)
+        diff = math.abs(currentRsi - inertialRsi)
+        if diff < minDiff
+            minDiff := diff
+            bestRsi := currentRsi
+
+if bar_index >= minLen - 1
+    inertialRsi := bestRsi
+
+rsiLine = ta.sma(inertialRsi, smoothInput)
+signalLine = ta.sma(rsiLine, signalLenInput)
+rsiEma1 = ta.ema(rsiLine, ema1LenInput)
+rsiEma2 = ta.ema(rsiLine, ema2LenInput)
+bullSignal = ta.crossover(rsiLine, osLevelInput)
+bearSignal = ta.crossunder(rsiLine, obLevelInput)
+rsiPivotLow = ta.pivotlow(rsiLine, pivotLeftInput, pivotRightInput)
+rsiPivotHigh = ta.pivothigh(rsiLine, pivotLeftInput, pivotRightInput)
+
+var float prevRsiLow = na
+var float prevPriceLow = na
+var int prevLowBar = na
+var float prevRsiHigh = na
+var float prevPriceHigh = na
+var int prevHighBar = na
+
+bullDiv = false
+bearDiv = false
+bullPivotPrice = float(na)
+bearPivotPrice = float(na)
+bullPivotTime = int(na)
+bearPivotTime = int(na)
+
+if not na(rsiPivotLow)
+    currentLowBar = bar_index - pivotRightInput
+    currentRsiLow = rsiPivotLow
+    currentPriceLow = low[pivotRightInput]
+    if not na(prevRsiLow) and not na(prevPriceLow) and not na(prevLowBar)
+        lowDistance = currentLowBar - prevLowBar
+        bullDiv := lowDistance >= minPivotDistance and lowDistance <= maxPivotDistance and currentPriceLow < prevPriceLow and currentRsiLow > prevRsiLow
+        if bullDiv
+            bullPivotPrice := currentPriceLow
+            bullPivotTime := time[pivotRightInput]
+        if showDivergenceInput and showBullDivInput and bullDiv
+            if showRsiDivLineInput
+                line.new(prevLowBar, prevRsiLow, currentLowBar, currentRsiLow, xloc=xloc.bar_index, color=bullDivColorInput, width=2)
+            if showPriceDivLineInput
+                line.new(prevLowBar, prevPriceLow, currentLowBar, currentPriceLow, xloc=xloc.bar_index, color=bullDivColorInput, width=2, force_overlay=true)
+    prevRsiLow := currentRsiLow
+    prevPriceLow := currentPriceLow
+    prevLowBar := currentLowBar
+
+if not na(rsiPivotHigh)
+    currentHighBar = bar_index - pivotRightInput
+    currentRsiHigh = rsiPivotHigh
+    currentPriceHigh = high[pivotRightInput]
+    if not na(prevRsiHigh) and not na(prevPriceHigh) and not na(prevHighBar)
+        highDistance = currentHighBar - prevHighBar
+        bearDiv := highDistance >= minPivotDistance and highDistance <= maxPivotDistance and currentPriceHigh > prevPriceHigh and currentRsiHigh < prevRsiHigh
+        if bearDiv
+            bearPivotPrice := currentPriceHigh
+            bearPivotTime := time[pivotRightInput]
+        if showDivergenceInput and showBearDivInput and bearDiv
+            if showRsiDivLineInput
+                line.new(prevHighBar, prevRsiHigh, currentHighBar, currentRsiHigh, xloc=xloc.bar_index, color=bearDivColorInput, width=2)
+            if showPriceDivLineInput
+                line.new(prevHighBar, prevPriceHigh, currentHighBar, currentPriceHigh, xloc=xloc.bar_index, color=bearDivColorInput, width=2, force_overlay=true)
+    prevRsiHigh := currentRsiHigh
+    prevPriceHigh := currentPriceHigh
+    prevHighBar := currentHighBar
+
+fJsonEscape(string value) =>
+    string escaped = str.replace_all(value, "\\", "\\\\")
+    escaped := str.replace_all(escaped, "\"", "\\\"")
+    escaped
+
+fEventTime(int value) =>
+    na(value) ? "" : str.format_time(value, "yyyy-MM-dd'T'HH:mm:ss", syminfo.timezone)
+
+fPayload(string action, string eventName, int pivotAt, float pivotPrice) =>
+    "{" +
+      "\"ticker\":\"" + fJsonEscape(syminfo.tickerid) + "\"," +
+      "\"action\":\"" + action + "\"," +
+      "\"signal_type\":\"leading_indicator\"," +
+      "\"strategy\":\"Inertial RSI\"," +
+      "\"event\":\"" + eventName + "\"," +
+      "\"price\":" + str.tostring(close) + "," +
+      "\"timeframe\":\"" + fJsonEscape(timeframe.period) + "\"," +
+      "\"time\":\"" + fEventTime(time) + "\"," +
+      "\"pivot_time\":\"" + fEventTime(pivotAt) + "\"," +
+      "\"pivot_price\":" + (na(pivotPrice) ? "null" : str.tostring(pivotPrice)) + "," +
+      "\"rsi_value\":" + str.tostring(rsiLine) + "," +
+      "\"ema_fast\":" + str.tostring(rsiEma1) + "," +
+      "\"ema_slow\":" + str.tostring(rsiEma2) + "," +
+      "\"valid_for_days\":" + str.tostring(validForDaysInput) + "," +
+      "\"secret\":\"" + fJsonEscape(webhookSecretInput) + "\"}"
+
+if sendDashboardAlertsInput and barstate.isconfirmed
+    if showDivergenceInput and showBullDivInput and bullDiv
+        alert(fPayload("setup_bull", "bull_divergence", bullPivotTime, bullPivotPrice), alert.freq_once_per_bar_close)
+    if showDivergenceInput and showBearDivInput and bearDiv
+        alert(fPayload("setup_bear", "bear_divergence", bearPivotTime, bearPivotPrice), alert.freq_once_per_bar_close)
+    if sendMomentumAlertsInput and bullSignal
+        alert(fPayload("momentum_bull", "rsi_cross_oversold", na, na), alert.freq_once_per_bar_close)
+    if sendMomentumAlertsInput and bearSignal
+        alert(fPayload("momentum_bear", "rsi_cross_overbought", na, na), alert.freq_once_per_bar_close)
+
+plotRsi = plot(rsiLine, title="Inertial RSI", color=rsiLine > 50 ? bullColorInput : bearColorInput, linewidth=2)
+plot(signalLine, title="Signal Line", color=color.new(chart.fg_color, 60), linestyle=plot.linestyle_dotted)
+plot(showEma1Input ? rsiEma1 : na, title="Inertial RSI EMA 1", color=ema1ColorInput, linewidth=2)
+plot(showEma2Input ? rsiEma2 : na, title="Inertial RSI EMA 2", color=ema2ColorInput, linewidth=2)
+midPlot = plot(50, title="Middle Level", color=color.new(chart.fg_color, 80), display=display.none)
+hline(obLevelInput, title="Overbought", color=color.new(chart.fg_color, 50), linestyle=hline.style_dashed)
+hline(osLevelInput, title="Oversold", color=color.new(chart.fg_color, 50), linestyle=hline.style_dashed)
+fill(plotRsi, midPlot, 100, 50, showFillInput ? bullColorInput : na, showFillInput ? color.new(bullColorInput, 100) : na)
+fill(plotRsi, midPlot, 50, 0, showFillInput ? color.new(bearColorInput, 100) : na, showFillInput ? bearColorInput : na)
+
+plotshape(showSignalsInput and bullSignal, title="Bullish RSI Signal", style=shape.triangleup, location=location.belowbar, color=bullColorInput, size=size.tiny, force_overlay=true)
+plotshape(showSignalsInput and bearSignal, title="Bearish RSI Signal", style=shape.triangledown, location=location.abovebar, color=bearColorInput, size=size.tiny, force_overlay=true)
+plotshape(showDivergenceInput and showBullDivInput and showRsiDivLabelInput and bullDiv ? rsiPivotLow : na, title="Bullish DIV RSI", style=shape.labelup, location=location.absolute, color=bullDivColorInput, text="BULL", textcolor=color.white, size=size.tiny, offset=-pivotRightInput)
+plotshape(showDivergenceInput and showBearDivInput and showRsiDivLabelInput and bearDiv ? rsiPivotHigh : na, title="Bearish DIV RSI", style=shape.labeldown, location=location.absolute, color=bearDivColorInput, text="BEAR", textcolor=color.white, size=size.tiny, offset=-pivotRightInput)
+plotshape(showDivergenceInput and showBullDivInput and showPriceDivLabelInput and bullDiv, title="Bullish DIV Price", style=shape.labelup, location=location.belowbar, color=bullDivColorInput, text="DIV", textcolor=color.white, size=size.tiny, offset=-pivotRightInput, force_overlay=true)
+plotshape(showDivergenceInput and showBearDivInput and showPriceDivLabelInput and bearDiv, title="Bearish DIV Price", style=shape.labeldown, location=location.abovebar, color=bearDivColorInput, text="DIV", textcolor=color.white, size=size.tiny, offset=-pivotRightInput, force_overlay=true)
+
+alertcondition(showDivergenceInput and showBullDivInput and bullDiv, title="Bullish Inertial RSI Divergence", message="Bullish divergence detected between price and Inertial RSI.")
+alertcondition(showDivergenceInput and showBearDivInput and bearDiv, title="Bearish Inertial RSI Divergence", message="Bearish divergence detected between price and Inertial RSI.")

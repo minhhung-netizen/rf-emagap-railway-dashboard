@@ -725,7 +725,8 @@ main {
 }
 
 .riskPanel,
-.alertCenterPanel {
+.alertCenterPanel,
+.leadingSignalsPanel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1101,6 +1102,32 @@ main {
   justify-content: space-between;
   min-height: 60px;
   padding: 12px 16px;
+}
+
+.leadingSignalsPanel {
+  margin-bottom: 16px;
+}
+
+.leadingSignalsPanel .tableWrap {
+  border-top: 1px solid var(--line-soft);
+}
+
+.leadingEvent {
+  font-weight: 760;
+}
+
+.leadingEvent.bull {
+  color: var(--buy);
+}
+
+.leadingEvent.bear {
+  color: var(--sell);
+}
+
+.statusBadge.matched {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  color: var(--accent);
 }
 
 .panelHead > div:first-child {
@@ -2100,6 +2127,18 @@ td strong {
   color: #ffffff;
 }
 
+.side.setup_bull,
+.side.momentum_bull {
+  background: color-mix(in srgb, var(--buy) 82%, #ffffff);
+  color: #ffffff;
+}
+
+.side.setup_bear,
+.side.momentum_bear {
+  background: color-mix(in srgb, var(--sell) 82%, #ffffff);
+  color: #ffffff;
+}
+
 .side.long_start,
 .side.dca_long {
   background: var(--buy);
@@ -2214,6 +2253,18 @@ td strong {
   background: color-mix(in srgb, var(--buy) 12%, transparent);
   border-color: color-mix(in srgb, var(--buy) 36%, var(--line));
   color: var(--buy);
+}
+
+.confirmBadge.leadingBullBadge {
+  background: color-mix(in srgb, var(--buy) 12%, transparent);
+  border-color: color-mix(in srgb, var(--buy) 36%, var(--line));
+  color: var(--buy);
+}
+
+.confirmBadge.leadingBearBadge {
+  background: color-mix(in srgb, var(--sell) 12%, transparent);
+  border-color: color-mix(in srgb, var(--sell) 36%, var(--line));
+  color: var(--sell);
 }
 
 .dividendBadge {
@@ -2556,8 +2607,12 @@ td strong {
     order: 4;
   }
 
-  .tabPanel[data-tab-panel="overview"] .timelinePanel {
+  .tabPanel[data-tab-panel="overview"] .leadingSignalsPanel {
     order: 5;
+  }
+
+  .tabPanel[data-tab-panel="overview"] .timelinePanel {
+    order: 6;
   }
 
   .performanceControls,

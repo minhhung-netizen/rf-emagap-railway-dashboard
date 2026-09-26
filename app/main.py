@@ -40,6 +40,11 @@ from app.services.dividends import (
     upcoming_dividend_events_for_positions,
 )
 from app.services.market_hours import is_market_open
+from app.services.leading_signals import (
+    attach_leading_signals,
+    build_leading_signal_feed,
+    is_leading_signal_action,
+)
 from app.services.manual_portfolio import (
     build_daily_performance_record,
     build_manual_portfolio,
@@ -172,7 +177,13 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "app" / "static"), name="static")
 
 FEATURE_PATHS = {
-    "overview": ("/api/summary", "/api/signals", "/api/chart/", "/api/market-risk"),
+    "overview": (
+        "/api/summary",
+        "/api/signals",
+        "/api/leading-signals",
+        "/api/chart/",
+        "/api/market-risk",
+    ),
     "positions": ("/api/performance", "/api/sectors", "/api/market-risk"),
     "performance": ("/api/performance", "/api/fund-performance"),
     "portfolioMonitor": ("/api/portfolio-backtests", "/api/portfolio-gate"),
@@ -272,6 +283,13 @@ class WebhookPayload(BaseModel):
     sleeve: str | None = None
     portfolio_sleeve: str | None = None
     sector: str | None = None
+    event: str | None = None
+    pivot_time: str | None = None
+    pivot_price: str | float | int | None = None
+    rsi_value: str | float | int | None = None
+    ema_fast: str | float | int | None = None
+    ema_slow: str | float | int | None = None
+    valid_for_days: str | float | int | None = None
 
 
 class ManualPositionPayload(BaseModel):
@@ -636,6 +654,7 @@ async def receive_webhook(
 
     is_confirmation = is_confirmation_signal(payload, action)
     payload_data = payload.model_dump()
+    payload_data.pop("secret", None)
     required_open_strategy = required_open_strategy_for_signal(payload, action)
     if is_confirmation and not required_open_strategy:
         return record_webhook_error(
@@ -665,6 +684,15 @@ async def receive_webhook(
             payload=payload_data,
         )
         return {"status": "duplicate", "signal": duplicate}
+
+    if is_leading_signal_action(action):
+        return receive_leading_signal(
+            payload=payload,
+            payload_data=payload_data,
+            ticker=ticker,
+            exchange=exchange,
+            action=action,
+        )
 
     gate = evaluate_portfolio_signal(
         payload=payload_data,
@@ -1015,7 +1043,14 @@ def performance(request: Request, ticker: str | None = None, strategy: str | Non
         strategy=strategy,
         user=request.state.user,
     )
-    return build_performance(signals, store.list_dividend_events())
+    result = build_performance(signals, store.list_dividend_events())
+    normalized_ticker = normalize_ticker(ticker)[0] if ticker else None
+    return attach_leading_signals(result, store.list_all_signals(ticker=normalized_ticker))
+
+
+@app.get("/api/leading-signals")
+def leading_signals() -> dict[str, Any]:
+    return build_leading_signal_feed(store.list_all_signals())
 
 
 @app.get("/api/backtest-stats")
@@ -1675,6 +1710,49 @@ def close_manual_position(position_id: int, payload: ManualClosePayload) -> dict
     }
 
 
+def receive_leading_signal(
+    *,
+    payload: WebhookPayload,
+    payload_data: dict[str, Any],
+    ticker: str,
+    exchange: str | None,
+    action: str,
+) -> dict[str, Any]:
+    price = normalize_stock_price(payload.price, ticker=ticker, exchange=exchange)
+    if price is None or price <= 0:
+        raise HTTPException(status_code=422, detail="Leading signal price must be greater than 0")
+    try:
+        valid_for_days = int(float(payload.valid_for_days or 30))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="valid_for_days must be a number") from exc
+    valid_for_days = max(1, min(valid_for_days, 180))
+    payload_data["valid_for_days"] = valid_for_days
+    payload_data["leading_signal"] = {
+        "version": 1,
+        "event": payload.event or action,
+        "direction": "bull" if action.endswith("_bull") else "bear",
+        "affects_exposure": False,
+    }
+    signal = store.insert_signal(
+        ticker=ticker,
+        exchange=exchange,
+        action=action,
+        price=price,
+        timeframe=payload.timeframe,
+        strategy=payload.strategy or "Inertial RSI",
+        note=payload.note,
+        source_time=payload.time,
+        payload=payload_data,
+        enrichment={"status": "pending", "ticker": ticker, "history": [], "metrics": {}},
+    )
+    enqueue_signal_enrichment(signal["id"], ticker)
+    return {
+        "status": "accepted",
+        "signal": signal,
+        "classification": payload_data["leading_signal"],
+    }
+
+
 @app.delete("/api/manual-portfolio/{position_id}")
 def delete_manual_position(position_id: int) -> dict[str, Any]:
     if not store.delete_manual_position(position_id):
@@ -1702,6 +1780,7 @@ def chart(ticker: str) -> dict[str, Any]:
         }
         for signal in ticker_signals
         if (signal["action"] or "").lower() in {"buy", "sell"}
+        or is_leading_signal_action(signal["action"])
     ]
     return {"ticker": normalized_ticker, "history": history, "markers": markers}
 
