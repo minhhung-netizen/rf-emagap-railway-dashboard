@@ -223,7 +223,7 @@ position, consume portfolio exposure, or enter performance calculations.
 
 In TradingView, add the indicator and create one alert with:
 
-- Condition: **Inertial RSI Leading Signals → Any alert() function call**.
+- Condition: **Inertial RSI + DIV + EMA DB → Any alert() function call**.
 - Webhook URL: `https://your-dashboard-domain/webhook`.
 - Leave the alert message unchanged; the script generates the JSON body.
 - Set **Webhook Secret** in the indicator inputs to the deployed

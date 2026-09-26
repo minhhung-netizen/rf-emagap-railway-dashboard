@@ -1,8 +1,9 @@
 // This Pine Script(R) code is subject to the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// Original indicator: LuxAlgo. Dashboard leading-signal integration added for this project.
+// Original indicator: LuxAlgo.
+// Modified: Divergence + 2 EMA calculated on Inertial RSI + Dashboard webhook.
 
 //@version=6
-indicator("Inertial RSI Leading Signals", "IRSI Lead", precision=2, max_lines_count=500, max_labels_count=500)
+indicator("Inertial RSI [LuxAlgo] + Divergence + RSI EMA + Dashboard", "Inertial RSI + DIV + EMA DB", precision=2, max_lines_count=500, max_labels_count=500)
 
 color BULL_COLOR = #089981
 color BEAR_COLOR = #f23645
@@ -20,9 +21,11 @@ grpEma = "RSI EMA"
 showEma1Input = input.bool(true, "Show EMA 1", group=grpEma)
 ema1LenInput = input.int(9, "EMA 1 Length", minval=1, group=grpEma)
 ema1ColorInput = input.color(#2196F3, "EMA 1 Color", group=grpEma)
+ema1WidthInput = input.int(2, "EMA 1 Width", minval=1, maxval=5, group=grpEma)
 showEma2Input = input.bool(true, "Show EMA 2", group=grpEma)
 ema2LenInput = input.int(21, "EMA 2 Length", minval=1, group=grpEma)
 ema2ColorInput = input.color(#FF9800, "EMA 2 Color", group=grpEma)
+ema2WidthInput = input.int(2, "EMA 2 Width", minval=1, maxval=5, group=grpEma)
 
 grpDiv = "Divergence"
 showDivergenceInput = input.bool(true, "Enable Divergence", group=grpDiv)
@@ -163,7 +166,7 @@ fJsonEscape(string value) =>
     escaped
 
 fEventTime(int value) =>
-    na(value) ? "" : str.format_time(value, "yyyy-MM-dd'T'HH:mm:ss", syminfo.timezone)
+    na(value) ? "" : str.format_time(value, "yyyy-MM-dd'T'HH:mm:ss", "UTC") + "+00:00"
 
 fPayload(string action, string eventName, int pivotAt, float pivotPrice) =>
     "{" +
@@ -186,17 +189,17 @@ fPayload(string action, string eventName, int pivotAt, float pivotPrice) =>
 if sendDashboardAlertsInput and barstate.isconfirmed
     if showDivergenceInput and showBullDivInput and bullDiv
         alert(fPayload("setup_bull", "bull_divergence", bullPivotTime, bullPivotPrice), alert.freq_once_per_bar_close)
-    if showDivergenceInput and showBearDivInput and bearDiv
+    else if showDivergenceInput and showBearDivInput and bearDiv
         alert(fPayload("setup_bear", "bear_divergence", bearPivotTime, bearPivotPrice), alert.freq_once_per_bar_close)
-    if sendMomentumAlertsInput and bullSignal
+    else if sendMomentumAlertsInput and bullSignal
         alert(fPayload("momentum_bull", "rsi_cross_oversold", na, na), alert.freq_once_per_bar_close)
-    if sendMomentumAlertsInput and bearSignal
+    else if sendMomentumAlertsInput and bearSignal
         alert(fPayload("momentum_bear", "rsi_cross_overbought", na, na), alert.freq_once_per_bar_close)
 
 plotRsi = plot(rsiLine, title="Inertial RSI", color=rsiLine > 50 ? bullColorInput : bearColorInput, linewidth=2)
 plot(signalLine, title="Signal Line", color=color.new(chart.fg_color, 60), linestyle=plot.linestyle_dotted)
-plot(showEma1Input ? rsiEma1 : na, title="Inertial RSI EMA 1", color=ema1ColorInput, linewidth=2)
-plot(showEma2Input ? rsiEma2 : na, title="Inertial RSI EMA 2", color=ema2ColorInput, linewidth=2)
+plot(showEma1Input ? rsiEma1 : na, title="Inertial RSI EMA 1", color=ema1ColorInput, linewidth=ema1WidthInput)
+plot(showEma2Input ? rsiEma2 : na, title="Inertial RSI EMA 2", color=ema2ColorInput, linewidth=ema2WidthInput)
 midPlot = plot(50, title="Middle Level", color=color.new(chart.fg_color, 80), display=display.none)
 hline(obLevelInput, title="Overbought", color=color.new(chart.fg_color, 50), linestyle=hline.style_dashed)
 hline(osLevelInput, title="Oversold", color=color.new(chart.fg_color, 50), linestyle=hline.style_dashed)
