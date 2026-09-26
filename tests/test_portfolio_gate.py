@@ -234,7 +234,13 @@ class PortfolioGateTest(unittest.TestCase):
             exchange="HOSE",
             action="buy",
             signals=signals,
-            backtest=None,
+            backtest={
+                "summary": {
+                    "attention_lists": {
+                        "rf": {"rows": [{"ticker": f"RF{index}"} for index in range(1, 16)] + [{"ticker": "HDC"}]}
+                    }
+                }
+            },
             default_allocation_pct=5,
             sector_map={"HDC": "real_estate"},
         )
@@ -251,6 +257,38 @@ class PortfolioGateTest(unittest.TestCase):
                 "cap_pct": 75,
             },
         )
+
+    def test_positions_outside_rebalance_list_do_not_consume_gate_caps(self):
+        classification = {
+            "version": 1,
+            "sleeve": "RF",
+            "allocation_pct": 5,
+            "position_strategy": "RF Stock MTF",
+        }
+        signals = [
+            stored_signal(
+                signal_id=index,
+                ticker=f"RF{index}",
+                strategy="RF Stock MTF",
+                action="buy",
+                classification={**classification, "sector": f"sector-{index}"},
+            )
+            for index in range(1, 16)
+        ]
+
+        accepted = evaluate_portfolio_signal(
+            payload={"strategy": "RF Stock MTF", "allocation_pct": 5},
+            ticker="HDC",
+            exchange="HOSE",
+            action="buy",
+            signals=signals,
+            backtest={"summary": {"attention_lists": {"rf": {"rows": [{"ticker": "MBB"}]}}}},
+            default_allocation_pct=5,
+            sector_map={"HDC": "real_estate"},
+        )
+
+        self.assertTrue(accepted["allowed"])
+        self.assertFalse(accepted["classification"]["rebalance_managed"])
 
     def test_price_refresh_forces_fresh_market_data_and_updates_open_position(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -348,13 +386,14 @@ class PortfolioGateTest(unittest.TestCase):
             self.assertEqual(stored["refreshed_at"], "2026-09-23T03:00:00+00:00")
 
     def test_confirm_buy_is_a_constrained_top_up_of_a_gated_base_position(self):
+        backtest = {"summary": {"attention_lists": {"rf": {"rows": [{"ticker": "VPB"}]}}}}
         first = evaluate_portfolio_signal(
             payload={"strategy": "RF Stock MTF"},
             ticker="VPB",
             exchange="HOSE",
             action="buy",
             signals=[],
-            backtest=None,
+            backtest=backtest,
             default_allocation_pct=5,
         )
         self.assertTrue(first["allowed"])
@@ -374,7 +413,7 @@ class PortfolioGateTest(unittest.TestCase):
             exchange="HOSE",
             action="confirm_buy",
             signals=signals,
-            backtest=None,
+            backtest=backtest,
             default_allocation_pct=5,
             base_strategy="RF Stock MTF",
         )
@@ -396,7 +435,7 @@ class PortfolioGateTest(unittest.TestCase):
             exchange="HOSE",
             action="confirm_buy",
             signals=signals,
-            backtest=None,
+            backtest=backtest,
             default_allocation_pct=5,
             base_strategy="RF Stock MTF",
         )
@@ -436,7 +475,13 @@ class PortfolioGateTest(unittest.TestCase):
             exchange="HOSE",
             action="buy",
             signals=signals,
-            backtest=None,
+            backtest={
+                "summary": {
+                    "attention_lists": {
+                        "rf": {"rows": [{"ticker": ticker} for ticker in ("VPB", "ACB", "MBB", "TCB", "HDB")]}
+                    }
+                }
+            },
             default_allocation_pct=5,
         )
 
@@ -498,7 +543,15 @@ class PortfolioGateTest(unittest.TestCase):
             }
             with patch.object(dashboard_main, "store", store), patch.object(
                 dashboard_main, "settings", settings
-            ), patch.object(dashboard_main, "enqueue_signal_enrichment"):
+            ), patch.object(dashboard_main, "enqueue_signal_enrichment"), patch.object(
+                store,
+                "latest_portfolio_backtest",
+                return_value={
+                    "summary": {
+                        "attention_lists": {"rf": {"rows": [{"ticker": "VPB"}]}}
+                    }
+                },
+            ):
                 first = asyncio.run(
                     dashboard_main.receive_webhook(
                         webhook_request(

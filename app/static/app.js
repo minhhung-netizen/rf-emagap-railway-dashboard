@@ -3773,7 +3773,9 @@ function renderPortfolioGate(gate) {
     Number.isFinite(Number(value)) ? formatPercent(Number(value) * 100) : placeholder;
 
   const recommendationAvailable = current.available === true;
-  els.portfolioGateExposure.textContent = percent(allOpen.total_exposure_pct);
+  els.portfolioGateExposure.textContent = recommendationAvailable
+    ? percent(current.total_exposure_pct)
+    : placeholder;
   els.portfolioGatePositions.textContent = Array.isArray(allOpen.positions)
     ? allOpen.positions.length
     : placeholder;
@@ -3797,13 +3799,13 @@ function renderPortfolioGate(gate) {
     "confirm-buy chỉ được top-up vị thế base đang mở",
   ];
   if (!recommendationAvailable) {
-    policy.unshift("Chưa có danh sách rebalance hợp lệ — không gán exposure được chấp nhận");
+    policy.unshift("Chưa có danh sách rebalance hợp lệ — chỉ theo dõi vị thế, chưa áp ràng buộc Gate");
   } else {
     const allCount = Array.isArray(allOpen.positions) ? allOpen.positions.length : 0;
     const excluded = Array.isArray(current.excluded_positions) ? current.excluded_positions : [];
     policy.unshift(`Rebalance chấp nhận ${current.positions.length}/${allCount} vị thế · ${percent(current.total_exposure_pct)}`);
     if (excluded.length) {
-      policy.unshift(`${excluded.length} vị thế ngoài danh mục khuyến nghị không cộng ở trên, nhưng vẫn tính vào trần Gate: ${percent(allOpen.total_exposure_pct)}`);
+      policy.unshift(`${excluded.length} vị thế ngoài danh mục khuyến nghị vẫn được theo dõi, không tính vào trần Gate`);
     }
   }
   els.portfolioGatePolicy.textContent = policy.join(" · ");

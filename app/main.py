@@ -735,9 +735,13 @@ async def receive_webhook(
         }
     payload_data["portfolio_gate"] = gate["classification"]
 
-    # An optional portfolio-wide NAV circuit breaker; exits remain available.
+    # An optional NAV circuit breaker for the rebalance-managed sleeve; exits remain available.
     policy = fund_risk_policy()
-    if action in {"buy", "confirm_buy"} and policy["pause_new_allocations"]:
+    if (
+        action in {"buy", "confirm_buy"}
+        and gate["classification"].get("rebalance_managed")
+        and policy["pause_new_allocations"]
+    ):
         risk = build_market_risk(store.list_nav_snapshots(), gate["guardrails"], policy)
         if risk["pause_recommended"]:
             return record_webhook_error(
@@ -1254,8 +1258,8 @@ def portfolio_gate() -> dict[str, Any]:
     gate_state = portfolio_gate_state(store.list_all_signals())
     return {
         "guardrails": guardrails_from_backtest(backtest),
-        # ``state`` is used for hard limits.  The rebalance card intentionally
-        # receives a separate, narrower view of positions currently recommended.
+        # ``state`` tracks every open gate position.  Guardrails are calculated
+        # from the narrower rebalance view for the matching RF/EMA sleeve.
         "state": gate_state,
         "rebalance_recommended": rebalance_recommended_state(gate_state, backtest),
         "source_report_date": backtest.get("report_date") if backtest else None,

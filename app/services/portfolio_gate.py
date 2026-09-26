@@ -85,12 +85,7 @@ def portfolio_gate_state(signals: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def summarize_portfolio_positions(positions: Any) -> dict[str, Any]:
-    """Summarize a supplied set of already-open gate positions.
-
-    This deliberately has no rebalance dependency: it remains the exposure used
-    to enforce the gate's hard limits, including holdings that a later rebalance
-    has stopped recommending.
-    """
+    """Summarize a supplied set of already-open gate positions."""
     rows = list(positions)
     by_ticker: dict[str, float] = defaultdict(float)
     by_sector: dict[str, float] = defaultdict(float)
@@ -116,28 +111,9 @@ def rebalance_recommended_state(
 
     A symbol in EMA must never make the same symbol held by RF recommended (or
     vice versa). Positions outside their *matching* list remain in ``gate_state``
-    and continue to consume hard-limit exposure.
+    and remain visible as tracked positions without consuming rebalance caps.
     """
-    summary = (backtest or {}).get("summary") or {}
-    attention_lists = summary.get("attention_lists") or {}
-    candidates: dict[str, Any] = {}
-    if isinstance(attention_lists, dict):
-        candidates = {"RF": attention_lists.get("rf"), "EMA": attention_lists.get("ema")}
-    # Older RF-only reports used attention_list before attention_lists.rf existed.
-    if not candidates.get("RF") and isinstance(summary.get("attention_list"), dict):
-        candidates["RF"] = summary["attention_list"]
-    recommended_tickers: dict[str, set[str]] = defaultdict(set)
-    has_recommendation = False
-    for sleeve, attention in candidates.items():
-        if not isinstance(attention, dict) or not isinstance(attention.get("rows"), list):
-            continue
-        has_recommendation = True
-        for row in attention["rows"]:
-            if not isinstance(row, dict):
-                continue
-            ticker = str(row.get("ticker") or row.get("symbol") or "").strip().upper().split(":")[-1]
-            if ticker:
-                recommended_tickers[sleeve].add(ticker)
+    recommended_tickers, has_recommendation = rebalance_tickers(backtest)
     if not has_recommendation:
         return {
             "available": False,
@@ -194,6 +170,7 @@ def evaluate_portfolio_signal(
             sector=current["sector"],
             allocation_pct=0,
             position_strategy=current["strategy"],
+            rebalance_managed=is_rebalance_managed(ticker, current["sleeve"], backtest),
         )
 
     if action == "confirm_sell":
@@ -204,6 +181,9 @@ def evaluate_portfolio_signal(
             sector=sector_for(ticker, exchange, payload),
             allocation_pct=0,
             position_strategy=strategy,
+            rebalance_managed=is_rebalance_managed(
+                ticker, classify_sleeve(payload), backtest
+            ),
         )
 
     if action == "confirm_buy":
@@ -230,29 +210,32 @@ def evaluate_portfolio_signal(
     requested_pct = allocation_pct(payload, default_allocation_pct)
     if requested_pct is None:
         return _rejected("invalid_allocation_pct", state, guardrails)
-    reason = _allocation_rejection_reason(
-        state=state,
-        guardrails=guardrails,
-        ticker=ticker,
-        sector=sector,
-        sleeve=sleeve,
-        requested_pct=requested_pct,
-    )
-    if reason:
-        return _rejected(
-            reason,
-            state,
-            guardrails,
-            rejection_context=_allocation_rejection_context(
-                reason=reason,
-                state=state,
-                guardrails=guardrails,
-                ticker=ticker,
-                sector=sector,
-                sleeve=sleeve,
-                requested_pct=requested_pct,
-            ),
+    rebalance_managed = is_rebalance_managed(ticker, sleeve, backtest)
+    if rebalance_managed:
+        managed_state = rebalance_recommended_state(state, backtest)
+        reason = _allocation_rejection_reason(
+            state=managed_state,
+            guardrails=guardrails,
+            ticker=ticker,
+            sector=sector,
+            sleeve=sleeve,
+            requested_pct=requested_pct,
         )
+        if reason:
+            return _rejected(
+                reason,
+                state,
+                guardrails,
+                rejection_context=_allocation_rejection_context(
+                    reason=reason,
+                    state=managed_state,
+                    guardrails=guardrails,
+                    ticker=ticker,
+                    sector=sector,
+                    sleeve=sleeve,
+                    requested_pct=requested_pct,
+                ),
+            )
     return _accepted(
         state,
         guardrails,
@@ -260,6 +243,7 @@ def evaluate_portfolio_signal(
         sector=sector,
         allocation_pct=requested_pct,
         position_strategy=position_strategy,
+        rebalance_managed=rebalance_managed,
     )
 
 
@@ -368,6 +352,7 @@ def _accepted(
     sector: str | None,
     allocation_pct: float,
     position_strategy: str,
+    rebalance_managed: bool = False,
 ) -> dict[str, Any]:
     return {
         "allowed": True,
@@ -379,6 +364,7 @@ def _accepted(
             "sector": sector,
             "allocation_pct": allocation_pct,
             "position_strategy": position_strategy,
+            "rebalance_managed": rebalance_managed,
         },
     }
 
@@ -394,6 +380,41 @@ def _rejected(
     if rejection_context is not None:
         result["rejection_context"] = rejection_context
     return result
+
+
+def rebalance_tickers(backtest: dict[str, Any] | None) -> tuple[dict[str, set[str]], bool]:
+    """Return the current rebalance universe grouped by its owning sleeve."""
+    summary = (backtest or {}).get("summary") or {}
+    attention_lists = summary.get("attention_lists") or {}
+    candidates: dict[str, Any] = {}
+    if isinstance(attention_lists, dict):
+        candidates = {"RF": attention_lists.get("rf"), "EMA": attention_lists.get("ema")}
+    # Older RF-only reports used attention_list before attention_lists.rf existed.
+    if not candidates.get("RF") and isinstance(summary.get("attention_list"), dict):
+        candidates["RF"] = summary["attention_list"]
+    tickers: dict[str, set[str]] = defaultdict(set)
+    available = False
+    for sleeve, attention in candidates.items():
+        if not isinstance(attention, dict) or not isinstance(attention.get("rows"), list):
+            continue
+        available = True
+        for row in attention["rows"]:
+            if not isinstance(row, dict):
+                continue
+            ticker = str(row.get("ticker") or row.get("symbol") or "").strip().upper().split(":")[-1]
+            if ticker:
+                tickers[sleeve].add(ticker)
+    return dict(tickers), available
+
+
+def is_rebalance_managed(
+    ticker: str, sleeve: str | None, backtest: dict[str, Any] | None
+) -> bool:
+    tickers, available = rebalance_tickers(backtest)
+    return bool(
+        available
+        and ticker.upper() in tickers.get(str(sleeve or "").upper(), set())
+    )
 
 
 def _strategy_key(value: Any) -> str:

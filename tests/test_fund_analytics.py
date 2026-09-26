@@ -172,6 +172,14 @@ class FundAnalyticsAPITest(unittest.TestCase):
             self.assertEqual(self.client.post('/api/admin/nav-snapshots',json={'snapshots':[snapshot('2026-01-05',100)]}).status_code,403)
 
     def test_optional_nav_pause_logs_authenticated_buy_but_preserves_exit(self):
+        self.store.upsert_portfolio_backtest(
+            source="test",
+            report_date="2026-01-05",
+            title="Test rebalance list",
+            research_status="ready",
+            generated_at=None,
+            summary={"attention_lists": {"rf": {"rows": [{"ticker": "MBB"}]}}},
+        )
         policy=RiskPolicy(pause_new_allocations=True).model_dump()
         self.client.patch('/api/admin/fund-risk-policy',json=policy)
         buy={'ticker':'HOSE:MBB','strategy':'RF Stock MTF','action':'buy','price':25000,'secret':'test-secret'}
