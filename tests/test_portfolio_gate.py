@@ -210,6 +210,48 @@ class PortfolioGateTest(unittest.TestCase):
         self.assertEqual(guardrails["rf_hard_cap"], 0.7)
         self.assertEqual(guardrails["ema_hard_cap"], 0.3)
 
+    def test_rf_sleeve_rejection_reports_the_exact_gate_calculation(self):
+        classification = {
+            "version": 1,
+            "sleeve": "RF",
+            "allocation_pct": 5,
+            "position_strategy": "RF Stock MTF",
+        }
+        signals = [
+            stored_signal(
+                signal_id=index,
+                ticker=f"RF{index}",
+                strategy="RF Stock MTF",
+                action="buy",
+                classification={**classification, "sector": f"sector-{index}"},
+            )
+            for index in range(1, 16)
+        ]
+
+        rejected = evaluate_portfolio_signal(
+            payload={"strategy": "RF Stock MTF", "allocation_pct": 5},
+            ticker="HDC",
+            exchange="HOSE",
+            action="buy",
+            signals=signals,
+            backtest=None,
+            default_allocation_pct=5,
+            sector_map={"HDC": "real_estate"},
+        )
+
+        self.assertFalse(rejected["allowed"])
+        self.assertEqual(rejected["reason"], "rf_sleeve_cap")
+        self.assertEqual(
+            rejected["rejection_context"],
+            {
+                "scope": "RF",
+                "current_pct": 75,
+                "requested_pct": 5,
+                "projected_pct": 80,
+                "cap_pct": 75,
+            },
+        )
+
     def test_confirm_buy_is_a_constrained_top_up_of_a_gated_base_position(self):
         first = evaluate_portfolio_signal(
             payload={"strategy": "RF Stock MTF"},

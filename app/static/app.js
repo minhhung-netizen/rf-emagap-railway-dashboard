@@ -3718,14 +3718,12 @@ function renderPortfolioGate(gate) {
     Number.isFinite(Number(value)) ? formatPercent(Number(value) * 100) : placeholder;
 
   const recommendationAvailable = current.available === true;
-  els.portfolioGateExposure.textContent = recommendationAvailable
-    ? percent(current.total_exposure_pct)
+  els.portfolioGateExposure.textContent = percent(allOpen.total_exposure_pct);
+  els.portfolioGatePositions.textContent = Array.isArray(allOpen.positions)
+    ? allOpen.positions.length
     : placeholder;
-  els.portfolioGatePositions.textContent = recommendationAvailable && Array.isArray(current.positions)
-    ? current.positions.length
-    : placeholder;
-  els.portfolioGateRf.textContent = recommendationAvailable ? percent(current.by_sleeve_pct?.RF || 0) : placeholder;
-  els.portfolioGateEma.textContent = recommendationAvailable ? percent(current.by_sleeve_pct?.EMA || 0) : placeholder;
+  els.portfolioGateRf.textContent = percent(allOpen.by_sleeve_pct?.RF || 0);
+  els.portfolioGateEma.textContent = percent(allOpen.by_sleeve_pct?.EMA || 0);
   els.portfolioGateSource.textContent = gate?.source_report_date
     ? `Snapshot ${formatDateOnly(gate.source_report_date)}`
     : "Dùng ràng buộc mặc định";
@@ -5684,13 +5682,13 @@ function renderInvalidSignals(invalidSignals) {
         <td>${escapeHtml(signal.action || "-")}</td>
         <td>${escapeHtml(signal.timeframe || "-")}</td>
         <td>${escapeHtml(displayStrategyName(signal.strategy) || "-")}</td>
-        <td>${escapeHtml(formatReason(signal.reason))}</td>
+        <td>${escapeHtml(formatReason(signal.reason, signal))}</td>
       </tr>
     `)
     .join("");
 }
 
-function formatReason(reason) {
+function formatReason(reason, signal = null) {
   const key = {
     duplicate_webhook: "duplicateWebhook",
     sell_without_open_buy: "sellWithoutOpenBuy",
@@ -5700,7 +5698,7 @@ function formatReason(reason) {
     base_strategy_not_open: "baseStrategyNotOpen",
   }[reason];
   if (key) return t(key);
-  return {
+  const label = {
     total_exposure_cap: "Vượt trần exposure tổng",
     ticker_cap: "Vượt trần tỷ trọng mã",
     sector_cap: "Vượt trần tỷ trọng ngành",
@@ -5721,6 +5719,15 @@ function formatReason(reason) {
     unsupported_asset_type: "Loại tài sản không được hỗ trợ",
     nav_risk_pause: "Tạm dừng phân bổ mới theo rủi ro NAV — kiểm tra NAV, drawdown và exposure",
   }[reason] || reason || "-";
+  const context = signal?.payload?.portfolio_gate_rejection;
+  const gateReasons = new Set([
+    "total_exposure_cap", "ticker_cap", "sector_cap", "rf_sleeve_cap", "ema_sleeve_cap",
+  ]);
+  if (!context || !gateReasons.has(reason)) return label;
+  const values = [context.current_pct, context.requested_pct, context.projected_pct, context.cap_pct]
+    .map(Number);
+  if (!values.every(Number.isFinite)) return label;
+  return `${label} (đang ${formatPercent(values[0])} + lệnh ${formatPercent(values[1])} = ${formatPercent(values[2])}, trần ${formatPercent(values[3])})`;
 }
 
 function computeAllocatedPortfolioMetrics(closedTrades) {

@@ -239,7 +239,20 @@ def evaluate_portfolio_signal(
         requested_pct=requested_pct,
     )
     if reason:
-        return _rejected(reason, state, guardrails)
+        return _rejected(
+            reason,
+            state,
+            guardrails,
+            rejection_context=_allocation_rejection_context(
+                reason=reason,
+                state=state,
+                guardrails=guardrails,
+                ticker=ticker,
+                sector=sector,
+                sleeve=sleeve,
+                requested_pct=requested_pct,
+            ),
+        )
     return _accepted(
         state,
         guardrails,
@@ -311,6 +324,42 @@ def _allocation_rejection_reason(
     return None
 
 
+def _allocation_rejection_context(
+    *,
+    reason: str,
+    state: dict[str, Any],
+    guardrails: dict[str, Any],
+    ticker: str,
+    sector: str,
+    sleeve: str,
+    requested_pct: float,
+) -> dict[str, Any]:
+    if reason == "total_exposure_cap":
+        current_pct = state["total_exposure_pct"]
+        cap_pct = guardrails["total_exposure_cap"] * 100
+        scope = "portfolio"
+    elif reason == "ticker_cap":
+        current_pct = state["by_ticker_pct"].get(ticker, 0)
+        cap_pct = guardrails["ticker_cap"] * 100
+        scope = ticker
+    elif reason == "sector_cap":
+        current_pct = state["by_sector_pct"].get(sector, 0)
+        cap_pct = guardrails["sector_cap"] * 100
+        scope = sector
+    else:
+        current_pct = state["by_sleeve_pct"].get(sleeve, 0)
+        cap_key = "rf_hard_cap" if sleeve == "RF" else "ema_hard_cap"
+        cap_pct = guardrails[cap_key] * 100
+        scope = sleeve
+    return {
+        "scope": scope,
+        "current_pct": current_pct,
+        "requested_pct": requested_pct,
+        "projected_pct": current_pct + requested_pct,
+        "cap_pct": cap_pct,
+    }
+
+
 def _accepted(
     state: dict[str, Any],
     guardrails: dict[str, Any],
@@ -334,8 +383,17 @@ def _accepted(
     }
 
 
-def _rejected(reason: str, state: dict[str, Any], guardrails: dict[str, Any]) -> dict[str, Any]:
-    return {"allowed": False, "reason": reason, "state": state, "guardrails": guardrails}
+def _rejected(
+    reason: str,
+    state: dict[str, Any],
+    guardrails: dict[str, Any],
+    *,
+    rejection_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result = {"allowed": False, "reason": reason, "state": state, "guardrails": guardrails}
+    if rejection_context is not None:
+        result["rejection_context"] = rejection_context
+    return result
 
 
 def _strategy_key(value: Any) -> str:

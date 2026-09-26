@@ -706,6 +706,9 @@ async def receive_webhook(
         sector_map=store.sector_map(),
     )
     if not gate["allowed"]:
+        rejection_context = gate.get("rejection_context")
+        if rejection_context:
+            payload_data["portfolio_gate_rejection"] = rejection_context
         invalid_signal = store.record_invalid_signal(
             ticker=ticker,
             action=action,
@@ -719,6 +722,7 @@ async def receive_webhook(
             "status": "rejected",
             "reason": gate["reason"],
             "guardrails": gate["guardrails"],
+            "rejection_context": rejection_context,
             "invalid_signal": invalid_signal,
         }
     payload_data["portfolio_gate"] = gate["classification"]
