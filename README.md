@@ -15,7 +15,7 @@ policy decides whether an alert is accepted.
 
 - Backend: FastAPI
 - Database: SQLite
-- Data enrichment: `vnstock` when available, graceful fallback when unavailable
+- Data enrichment: FireAnt/DNSE when configured; optional `vnstock` adapter with graceful fallback when unavailable
 - Frontend: Static HTML, CSS, and JavaScript served by FastAPI
 
 ## Setup
