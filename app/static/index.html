@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RF + EMA Portfolio Gate</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/styles.css?v=20260926-leading-signals-3" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260926-leading-signals-4" />
     <link rel="stylesheet" href="/static/fund-analytics.css?v=1" />
   </head>
   <body>
@@ -59,6 +59,7 @@
     <main>
       <nav class="tabs" aria-label="Dashboard sections">
         <button class="tabButton active" type="button" data-tab-target="overview" data-i18n="tabOverview">Overview</button>
+        <button class="tabButton" type="button" data-tab-target="leadingSignals" data-i18n="tabLeadingSignals">Leading Signals</button>
         <button class="tabButton" type="button" data-tab-target="positions" data-i18n="tabPositions">Positions</button>
         <button class="tabButton" type="button" data-tab-target="performance" data-i18n="tabPerformance">Performance</button>
         <button class="tabButton" type="button" data-tab-target="portfolioMonitor">RF + EMA Monitor</button>
@@ -163,34 +164,6 @@
           <div id="userAttentionList" class="attentionList"></div>
         </section>
 
-        <section class="leadingSignalsPanel">
-          <div class="panelHead">
-            <div>
-              <p class="eyebrow">Inertial RSI</p>
-              <h2>Tín hiệu sớm</h2>
-            </div>
-            <span id="leadingSignalStatus" class="mutedText">Chưa có tín hiệu</span>
-          </div>
-          <div class="tableWrap compactTable">
-            <table>
-              <thead>
-                <tr>
-                  <th>Mã</th>
-                  <th>Sự kiện</th>
-                  <th>Khung</th>
-                  <th>Giá phát hiện</th>
-                  <th>Ngày phát hiện</th>
-                  <th>Ngày pivot</th>
-                  <th>Hiệu lực</th>
-                  <th>Trạng thái</th>
-                  <th>Dẫn trước</th>
-                </tr>
-              </thead>
-              <tbody id="leadingSignalsTable"></tbody>
-            </table>
-          </div>
-        </section>
-
         <section class="workspace">
           <div class="chartPanel">
             <div class="panelHead">
@@ -251,6 +224,36 @@
             </div>
           </div>
           <div id="tickerTimeline" class="timelineList"></div>
+        </section>
+      </div>
+
+      <div class="tabPanel" data-tab-panel="leadingSignals">
+        <section class="leadingSignalsPanel">
+          <div class="panelHead">
+            <div>
+              <p class="eyebrow">Inertial RSI</p>
+              <h2>Tín hiệu sớm</h2>
+            </div>
+            <span id="leadingSignalStatus" class="mutedText">Chưa có tín hiệu</span>
+          </div>
+          <div class="tableWrap compactTable">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mã</th>
+                  <th>Sự kiện</th>
+                  <th>Khung</th>
+                  <th>Giá phát hiện</th>
+                  <th>Ngày phát hiện</th>
+                  <th>Ngày pivot</th>
+                  <th>Hiệu lực</th>
+                  <th>Trạng thái</th>
+                  <th>Dẫn trước</th>
+                </tr>
+              </thead>
+              <tbody id="leadingSignalsTable"></tbody>
+            </table>
+          </div>
         </section>
       </div>
 
@@ -1512,6 +1515,6 @@
     <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
     <script src="/static/trade-ledger.js?v=20260908-1"></script>
     <script src="/static/fund-analytics.js?v=20260908-1"></script>
-    <script src="/static/app.js?v=20260926-leading-signals-3"></script>
+    <script src="/static/app.js?v=20260926-leading-signals-4"></script>
   </body>
 </html>

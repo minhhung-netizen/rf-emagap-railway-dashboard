@@ -325,6 +325,7 @@ const translations = {
     clearFilter: "Clear",
     filteredTrades: "Showing trades for",
     tabOverview: "Overview",
+    tabLeadingSignals: "Leading Signals",
     tabPositions: "Positions",
     tabDerivatives: "VN30 Derivatives",
     tabManualPortfolio: "Manual Portfolio",
@@ -546,6 +547,7 @@ const translations = {
     clearFilter: "Xóa lọc",
     filteredTrades: "Đang xem giao dịch của",
     tabOverview: "Tổng quan",
+    tabLeadingSignals: "Tín hiệu sớm",
     tabPositions: "Vị thế",
     tabManualPortfolio: "Danh mục tay",
     tabPerformance: "Hiệu suất",
@@ -612,6 +614,7 @@ const translations = {
     clearFilter: "Xóa lọc",
     filteredTrades: "Đang xem giao dịch của",
     tabOverview: "Tổng quan",
+    tabLeadingSignals: "Tín hiệu sớm",
     tabPositions: "Vị thế",
     tabManualPortfolio: "Danh mục tay",
     tabPerformance: "Hiệu suất",
@@ -739,6 +742,7 @@ Object.assign(translations.vi, {
   clearFilter: "Xóa lọc",
   filteredTrades: "Đang xem giao dịch của",
   tabOverview: "Tổng quan",
+  tabLeadingSignals: "Tín hiệu sớm",
   tabPositions: "Vị thế",
   tabManualPortfolio: "Danh mục tay",
   tabPerformance: "Hiệu suất",
@@ -2990,20 +2994,22 @@ function applyAccessControl() {
   const isAdmin = state.user?.role === "admin";
   document.querySelectorAll("[data-tab-target]").forEach((button) => {
     const target = button.dataset.tabTarget;
+    const feature = target === "leadingSignals" ? "overview" : target;
     const visible = target === "admin"
       ? isAdmin
       : target === "workflow"
         ? isAdmin || allowed.has("portfolioMonitor")
-        : isAdmin || allowed.has(target);
+        : isAdmin || allowed.has(feature);
     button.dataset.accessHidden = visible ? "false" : "true";
   });
   document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
     const target = panel.dataset.tabPanel;
+    const feature = target === "leadingSignals" ? "overview" : target;
     const visible = target === "admin"
       ? isAdmin
       : target === "workflow"
         ? isAdmin || allowed.has("portfolioMonitor")
-        : isAdmin || allowed.has(target);
+        : isAdmin || allowed.has(feature);
     panel.dataset.accessHidden = visible ? "false" : "true";
   });
   [
@@ -6182,7 +6188,10 @@ function renderLeadingSignals(summary = {}) {
     `;
   }).join("");
   els.leadingSignalsTable.querySelectorAll("[data-leading-ticker]").forEach((row) => {
-    row.addEventListener("click", () => renderChart(row.dataset.leadingTicker));
+    row.addEventListener("click", () => {
+      setActiveTab("overview");
+      renderChart(row.dataset.leadingTicker);
+    });
   });
 }
 

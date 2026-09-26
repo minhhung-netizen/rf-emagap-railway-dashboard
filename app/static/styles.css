@@ -2607,12 +2607,8 @@ td strong {
     order: 4;
   }
 
-  .tabPanel[data-tab-panel="overview"] .leadingSignalsPanel {
-    order: 5;
-  }
-
   .tabPanel[data-tab-panel="overview"] .timelinePanel {
-    order: 6;
+    order: 5;
   }
 
   .performanceControls,
