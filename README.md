@@ -15,7 +15,7 @@ policy decides whether an alert is accepted.
 
 - Backend: FastAPI
 - Database: SQLite
-- Data enrichment: FireAnt/DNSE when configured; optional `vnstock` adapter with graceful fallback when unavailable
+- Data enrichment: VNStock is the primary market-price source; FireAnt/DNSE remain optional fallbacks
 - Frontend: Static HTML, CSS, and JavaScript served by FastAPI
 
 ## Setup
@@ -34,7 +34,7 @@ Open the dashboard at:
 http://127.0.0.1:8000
 ```
 
-Webhook requests return quickly. Price-history enrichment runs as a FastAPI background task and appears on the dashboard after the next refresh. When configured, FireAnt supplies daily OHLCV history and dividend-event notes, DNSE supplies the latest matched price, and VNStock remains the automatic fallback.
+Webhook requests return quickly. Price-history enrichment runs as a FastAPI background task and appears on the dashboard after the next refresh. VNStock supplies the primary daily OHLCV history. FireAnt and DNSE remain automatic fallbacks when configured.
 
 ## FireAnt daily OHLCV and dividend events
 
@@ -82,13 +82,15 @@ PRICE_REFRESH_MINUTES=120
 MARKET_SESSIONS=09:00-11:30,13:00-15:00
 VNSTOCK_CACHE_TTL_MINUTES=240
 VNSTOCK_MIN_REQUEST_INTERVAL_SECONDS=4
+VNSTOCK_MAX_REQUESTS_PER_MINUTE=19
 VNSTOCK_LOOKBACK_DAYS=90
 VNSTOCK_INCLUDE_METRICS=false
 ```
 
 The default `vnstock` settings are intentionally conservative for the free tier:
-each ticker is cached for 4 hours, calls are spaced by at least 4 seconds, and
-fundamental metrics are skipped unless explicitly enabled.
+all price, sector and dividend requests share one rolling limiter capped at 19
+requests per minute, calls are spaced by at least 4 seconds, each ticker is cached
+for 4 hours, and fundamental metrics are skipped unless explicitly enabled.
 
 ## Performance Tracking
 

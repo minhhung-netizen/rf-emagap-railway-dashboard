@@ -18,6 +18,7 @@ class Settings:
     duplicate_window_minutes: int = 5
     vnstock_cache_ttl_minutes: int = 240
     vnstock_min_request_interval_seconds: float = 4.0
+    vnstock_max_requests_per_minute: int = 19
     vnstock_lookback_days: int = 90
     vnstock_include_metrics: bool = False
     dnse_api_key: str | None = None
@@ -56,6 +57,9 @@ def get_settings() -> Settings:
     vnstock_min_request_interval_seconds = float(
         os.getenv("VNSTOCK_MIN_REQUEST_INTERVAL_SECONDS", "4")
     )
+    vnstock_max_requests_per_minute = int(
+        os.getenv("VNSTOCK_MAX_REQUESTS_PER_MINUTE", "19")
+    )
     vnstock_lookback_days = int(os.getenv("VNSTOCK_LOOKBACK_DAYS", "90"))
     vnstock_include_metrics = _env_bool("VNSTOCK_INCLUDE_METRICS", default=False)
     dnse_api_key = os.getenv("DNSE_API_KEY") or None
@@ -88,6 +92,9 @@ def get_settings() -> Settings:
         duplicate_window_minutes=max(1, duplicate_window_minutes),
         vnstock_cache_ttl_minutes=max(1, vnstock_cache_ttl_minutes),
         vnstock_min_request_interval_seconds=max(0.0, vnstock_min_request_interval_seconds),
+        vnstock_max_requests_per_minute=max(
+            1, min(19, vnstock_max_requests_per_minute)
+        ),
         vnstock_lookback_days=max(30, vnstock_lookback_days),
         vnstock_include_metrics=vnstock_include_metrics,
         dnse_api_key=dnse_api_key,

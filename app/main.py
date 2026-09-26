@@ -25,6 +25,7 @@ from app.services.enrichment import (
     FireAntEnricher,
     MarketDataEnricher,
     VnstockEnricher,
+    VnstockRateLimiter,
     coerce_float,
     fetch_dividend_events,
     fetch_industry_map,
@@ -103,11 +104,17 @@ else:
             else None,
         )
 logger = logging.getLogger(__name__)
+vnstock_rate_limiter = VnstockRateLimiter(
+    max_requests_per_minute=settings.vnstock_max_requests_per_minute,
+    min_request_interval_seconds=settings.vnstock_min_request_interval_seconds,
+)
 vnstock_enricher = VnstockEnricher(
     lookback_days=settings.vnstock_lookback_days,
     cache_ttl_seconds=settings.vnstock_cache_ttl_minutes * 60,
     min_request_interval_seconds=settings.vnstock_min_request_interval_seconds,
+    max_requests_per_minute=settings.vnstock_max_requests_per_minute,
     include_metrics=settings.vnstock_include_metrics,
+    rate_limiter=vnstock_rate_limiter,
 )
 dnse_enricher = None
 if settings.dnse_api_key and settings.dnse_api_secret:
@@ -139,6 +146,7 @@ enricher = MarketDataEnricher(
     fireant=fireant_enricher,
     dnse=dnse_enricher,
     vnstock=vnstock_enricher,
+    prefer_vnstock=True,
 )
 last_auto_manual_price_refresh_date: str | None = None
 enrichment_queue: asyncio.Queue[tuple[int, str]] | None = None
@@ -593,16 +601,11 @@ def dashboard_settings() -> dict[str, Any]:
         "price_refresh_minutes": settings.price_refresh_minutes,
         "market_sessions": settings.market_sessions,
         "market_data_provider": (
-            "fireant+dnse"
-            if fireant_enricher is not None and dnse_enricher is not None
-            else "fireant"
-            if fireant_enricher is not None
-            else "dnse"
-            if dnse_enricher is not None
-            else "vnstock"
+            "vnstock"
             if find_spec("vnstock") is not None
             else "unavailable"
         ),
+        "vnstock_max_requests_per_minute": settings.vnstock_max_requests_per_minute,
     }
 
 
@@ -1847,7 +1850,7 @@ async def price_refresh_loop() -> None:
 
 def populate_sectors_from_listing() -> dict[str, Any]:
     """Refresh provider classifications without overwriting administrator choices."""
-    mapping = fetch_industry_map()
+    mapping = fetch_industry_map(rate_limiter=vnstock_rate_limiter)
     result = store.apply_auto_sector_mappings(mapping) if mapping else {"added": 0, "updated": 0}
     store.set_app_setting("sectors_refreshed_at", utc_now_iso())
     store.set_app_setting("sectors_source_count", str(len(mapping)))
@@ -1887,7 +1890,11 @@ async def refresh_dividend_events_for_open_positions() -> dict[str, Any]:
 async def collect_dividend_events_for_ticker(ticker: str) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     try:
-        events.extend(await asyncio.to_thread(fetch_dividend_events, ticker))
+        events.extend(
+            await asyncio.to_thread(
+                fetch_dividend_events, ticker, rate_limiter=vnstock_rate_limiter
+            )
+        )
     except asyncio.CancelledError:
         raise
     except BaseException:

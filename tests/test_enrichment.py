@@ -5,6 +5,7 @@ from app.services.enrichment import (
     FireAntEnricher,
     MarketDataEnricher,
     VnstockEnricher,
+    VnstockRateLimiter,
     _dnse_ohlc_records,
     _normalize_dnse_stock_history,
     _fireant_dividend_events,
@@ -17,6 +18,34 @@ from app.services.enrichment import (
 
 
 class EnrichmentHelpersTest(unittest.TestCase):
+    def test_vnstock_rate_limiter_stays_below_free_tier_limit(self):
+        clock = [0.0]
+        sleeps = []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            clock[0] += seconds
+
+        limiter = VnstockRateLimiter(
+            max_requests_per_minute=3,
+            min_request_interval_seconds=0,
+            monotonic=lambda: clock[0],
+            sleeper=sleep,
+        )
+
+        for _ in range(4):
+            limiter.wait()
+
+        self.assertEqual(sleeps, [60.0])
+
+    def test_vnstock_rate_limiter_caps_configuration_at_nineteen(self):
+        limiter = VnstockRateLimiter(
+            max_requests_per_minute=20,
+            min_request_interval_seconds=0,
+        )
+
+        self.assertEqual(limiter.max_requests, 19)
+
     def test_normalize_ticker_removes_exchange_prefix(self):
         self.assertEqual(normalize_ticker("HOSE:VPB"), ("VPB", "HOSE"))
 
@@ -120,6 +149,35 @@ class EnrichmentHelpersTest(unittest.TestCase):
         self.assertEqual(enricher.calls, 2)
         self.assertEqual(first["history"][0]["close"], 1)
         self.assertEqual(second["history"][0]["close"], 2)
+
+    def test_market_data_enricher_prefers_vnstock(self):
+        class Stub:
+            def __init__(self, source):
+                self.source = source
+                self.calls = 0
+
+            def enrich(self, ticker, force=False):
+                self.calls += 1
+                return {
+                    "status": "ok",
+                    "source": self.source,
+                    "history": [{"close": 25}],
+                }
+
+        vnstock = Stub("vnstock")
+        fireant = Stub("fireant")
+        dnse = Stub("dnse")
+        result = MarketDataEnricher(
+            fireant=fireant,
+            dnse=dnse,
+            vnstock=vnstock,
+            prefer_vnstock=True,
+        ).enrich("SSI", force=True)
+
+        self.assertEqual(result["source"], "vnstock")
+        self.assertEqual(vnstock.calls, 1)
+        self.assertEqual(fireant.calls, 0)
+        self.assertEqual(dnse.calls, 0)
 
     def test_dnse_ohlc_records_supports_tradingview_array_shape(self):
         records = _dnse_ohlc_records(

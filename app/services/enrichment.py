@@ -9,12 +9,13 @@ import unicodedata
 import base64
 import hashlib
 import hmac
+from collections import deque
 from copy import deepcopy
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import date, datetime, timedelta, timezone
 from importlib import import_module
 from io import StringIO
-from typing import Any
+from typing import Any, Callable
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -138,6 +139,49 @@ def normalize_action(raw_action: str | None) -> str:
     return aliases.get(action, aliases.get(compact_action, action))
 
 
+class VnstockRateLimiter:
+    """Thread-safe rolling-window limiter shared by every VNStock request."""
+
+    def __init__(
+        self,
+        *,
+        max_requests_per_minute: int = 19,
+        min_request_interval_seconds: float = 4.0,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self.max_requests = max(1, min(19, int(max_requests_per_minute)))
+        self.window_seconds = 60.0
+        self.min_interval_seconds = max(0.0, min_request_interval_seconds)
+        self._monotonic = monotonic
+        self._sleeper = sleeper
+        self._timestamps: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        while True:
+            with self._lock:
+                now = self._monotonic()
+                while self._timestamps and now - self._timestamps[0] >= self.window_seconds:
+                    self._timestamps.popleft()
+
+                interval_wait = 0.0
+                if self._timestamps:
+                    interval_wait = self.min_interval_seconds - (
+                        now - self._timestamps[-1]
+                    )
+                window_wait = 0.0
+                if len(self._timestamps) >= self.max_requests:
+                    window_wait = self.window_seconds - (
+                        now - self._timestamps[0]
+                    )
+                wait_seconds = max(interval_wait, window_wait, 0.0)
+                if wait_seconds <= 0:
+                    self._timestamps.append(now)
+                    return
+            self._sleeper(wait_seconds)
+
+
 class VnstockEnricher:
     """Small adapter around vnstock with graceful fallback when APIs differ."""
 
@@ -147,7 +191,9 @@ class VnstockEnricher:
         *,
         cache_ttl_seconds: int = 240 * 60,
         min_request_interval_seconds: float = 4.0,
+        max_requests_per_minute: int = 19,
         include_metrics: bool = False,
+        rate_limiter: VnstockRateLimiter | None = None,
     ) -> None:
         self.lookback_days = lookback_days
         self.cache_ttl_seconds = cache_ttl_seconds
@@ -155,7 +201,10 @@ class VnstockEnricher:
         self.include_metrics = include_metrics
         self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self._lock = threading.Lock()
-        self._last_request_at = 0.0
+        self.rate_limiter = rate_limiter or VnstockRateLimiter(
+            max_requests_per_minute=max_requests_per_minute,
+            min_request_interval_seconds=min_request_interval_seconds,
+        )
 
     def enrich(self, ticker: str, *, force: bool = False) -> dict[str, Any]:
         if not force:
@@ -188,11 +237,9 @@ class VnstockEnricher:
             module = __import__("vnstock")
             end = date.today()
             start = end - timedelta(days=self.lookback_days)
-            self._wait_for_rate_limit()
             history = self._get_history(module, ticker, start.isoformat(), end.isoformat())
             metrics = {}
             if self.include_metrics:
-                self._wait_for_rate_limit()
                 metrics = self._get_metrics(module, ticker)
 
         return {
@@ -219,15 +266,7 @@ class VnstockEnricher:
             self._cache[ticker] = (time.monotonic(), deepcopy(enrichment))
 
     def _wait_for_rate_limit(self) -> None:
-        if self.min_request_interval_seconds <= 0:
-            return
-        with self._lock:
-            now = time.monotonic()
-            wait_seconds = self.min_request_interval_seconds - (now - self._last_request_at)
-            if wait_seconds > 0:
-                time.sleep(wait_seconds)
-                now = time.monotonic()
-            self._last_request_at = now
+        self.rate_limiter.wait()
 
     def _get_history(
         self, module: Any, ticker: str, start: str, end: str
@@ -238,6 +277,7 @@ class VnstockEnricher:
             for source in ("VCI", "KBS"):
                 try:
                     quote = quote_class(symbol=ticker, source=source, show_log=False)
+                    self._wait_for_rate_limit()
                     data = quote.history(start=start, end=end, interval="1D")
                     records = _records_from_dataframe_like(data)
                     if records:
@@ -248,6 +288,7 @@ class VnstockEnricher:
             pass
 
         if hasattr(module, "stock_historical_data"):
+            self._wait_for_rate_limit()
             data = module.stock_historical_data(
                 symbol=ticker,
                 start_date=start,
@@ -259,6 +300,7 @@ class VnstockEnricher:
 
         if hasattr(module, "Vnstock"):
             stock = module.Vnstock().stock(symbol=ticker, source="VCI")
+            self._wait_for_rate_limit()
             data = stock.quote.history(start=start, end=end, interval="1D")
             return _records_from_dataframe_like(data)
 
@@ -269,6 +311,7 @@ class VnstockEnricher:
             finance_module = import_module("vnstock.api.financial")
             finance_class = getattr(finance_module, "Finance")
             finance = finance_class(symbol=ticker, source="VCI", period="year", show_log=False)
+            self._wait_for_rate_limit()
             ratio = finance.ratio(period="year", lang="en", dropna=True)
             records = _records_from_dataframe_like(ratio)
             return records[-1] if records else {}
@@ -280,6 +323,7 @@ class VnstockEnricher:
                 return {}
             if hasattr(module, "Vnstock"):
                 stock = module.Vnstock().stock(symbol=ticker, source="VCI")
+                self._wait_for_rate_limit()
                 ratio = stock.finance.ratio(period="year", lang="en", dropna=True)
                 records = _records_from_dataframe_like(ratio)
                 return records[-1] if records else {}
@@ -526,7 +570,7 @@ class DnseEnricher:
 
 
 class MarketDataEnricher:
-    """Use FireAnt history, DNSE latest price, then fall back to VNStock."""
+    """Select a primary market source and preserve provider fallbacks."""
 
     def __init__(
         self,
@@ -534,12 +578,26 @@ class MarketDataEnricher:
         fireant: FireAntEnricher | None = None,
         dnse: DnseEnricher | None,
         vnstock: VnstockEnricher,
+        prefer_vnstock: bool = False,
     ) -> None:
         self.fireant = fireant
         self.dnse = dnse
         self.vnstock = vnstock
+        self.prefer_vnstock = prefer_vnstock
 
     def enrich(self, ticker: str, *, force: bool = False) -> dict[str, Any]:
+        if self.prefer_vnstock:
+            primary = self.vnstock.enrich(ticker, force=force)
+            primary.setdefault("source", "vnstock")
+            if primary.get("status") == "ok" and primary.get("history"):
+                return primary
+            fallback = self._enrich_without_vnstock(ticker, force=force)
+            if fallback is not None:
+                fallback["fallback_from"] = "vnstock"
+                fallback["vnstock_message"] = primary.get("message")
+                return fallback
+            return primary
+
         fireant_message = None
         if self.fireant is not None:
             primary = self.fireant.enrich(ticker, force=force)
@@ -574,6 +632,23 @@ class MarketDataEnricher:
             result["fireant_message"] = fireant_message
         result.setdefault("source", "vnstock")
         return result
+
+    def _enrich_without_vnstock(
+        self, ticker: str, *, force: bool
+    ) -> dict[str, Any] | None:
+        fireant_message = None
+        if self.fireant is not None:
+            result = self.fireant.enrich(ticker, force=force)
+            if result.get("status") == "ok" and result.get("history"):
+                return result
+            fireant_message = result.get("message")
+        if self.dnse is not None:
+            result = self.dnse.enrich(ticker, force=force)
+            if fireant_message:
+                result["fireant_message"] = fireant_message
+            if result.get("status") == "ok" and result.get("history"):
+                return result
+        return None
 
 
 class FireAntRestClient:
@@ -910,7 +985,9 @@ def _records_from_dataframe_like(value: Any) -> list[dict[str, Any]]:
     return [_json_ready(row) for row in records]
 
 
-def fetch_industry_map() -> dict[str, str]:
+def fetch_industry_map(
+    *, rate_limiter: VnstockRateLimiter | None = None
+) -> dict[str, str]:
     """Best-effort ticker-to-industry map from vnstock's listing API."""
     listing = _resolve_vnstock_listing()
     if listing is None:
@@ -920,6 +997,8 @@ def fetch_industry_map() -> dict[str, str]:
         if method is None:
             continue
         try:
+            if rate_limiter is not None:
+                rate_limiter.wait()
             mapping = _industry_map_from_records(_records_from_dataframe_like(method()))
         except BaseException:
             continue
@@ -987,7 +1066,9 @@ def _coerce_level(value: Any) -> int | None:
         return None
 
 
-def fetch_dividend_events(ticker: str) -> list[dict[str, Any]]:
+def fetch_dividend_events(
+    ticker: str, *, rate_limiter: VnstockRateLimiter | None = None
+) -> list[dict[str, Any]]:
     """Fetch announced ex-rights events for one ticker when vnstock supports it."""
     symbol = str(ticker or "").strip().upper()
     if not symbol:
@@ -996,6 +1077,8 @@ def fetch_dividend_events(ticker: str) -> list[dict[str, Any]]:
     if company is None or not callable(getattr(company, "events", None)):
         return []
     try:
+        if rate_limiter is not None:
+            rate_limiter.wait()
         records = _records_from_dataframe_like(company.events())
     except BaseException:
         return []
