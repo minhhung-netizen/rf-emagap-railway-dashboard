@@ -9,6 +9,7 @@ import logging
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date
+from importlib.util import find_spec
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
@@ -589,6 +590,8 @@ def available_signal_strategies() -> list[str]:
 def dashboard_settings() -> dict[str, Any]:
     return {
         "default_signal_weight_pct": settings.default_signal_weight_pct,
+        "price_refresh_minutes": settings.price_refresh_minutes,
+        "market_sessions": settings.market_sessions,
         "market_data_provider": (
             "fireant+dnse"
             if fireant_enricher is not None and dnse_enricher is not None
@@ -597,6 +600,8 @@ def dashboard_settings() -> dict[str, Any]:
             else "dnse"
             if dnse_enricher is not None
             else "vnstock"
+            if find_spec("vnstock") is not None
+            else "unavailable"
         ),
     }
 
@@ -1939,11 +1944,19 @@ async def refresh_open_position_prices(*, include_manual: bool = True) -> int:
 
     for ticker in refresh_tickers:
         try:
-            enrichment = await asyncio.to_thread(enricher.enrich, ticker)
+            enrichment = await asyncio.to_thread(enricher.enrich, ticker, force=True)
         except asyncio.CancelledError:
             raise
         except BaseException:
             logger.exception("Skipping scheduled price refresh for %s", ticker)
+            continue
+        price = latest_history_close(enrichment)
+        if price is None or price <= 0:
+            logger.warning(
+                "Keeping the last valid market price for %s because refresh failed: %s",
+                ticker,
+                enrichment.get("message") or enrichment.get("status") or "no price",
+            )
             continue
         enrichment["refreshed_by"] = "scheduled_price_refresh"
         enrichment["refreshed_at"] = utc_now_iso()
@@ -1952,13 +1965,11 @@ async def refresh_open_position_prices(*, include_manual: bool = True) -> int:
             store.update_signal_enrichment(signal_id, enrichment)
             updated_signals += 1
         if ticker in manual_tickers:
-            price = latest_history_close(enrichment)
-            if price is not None and price > 0:
-                store.update_manual_market_price(
-                    ticker=ticker,
-                    price=price,
-                    recorded_at=enrichment["refreshed_at"],
-                )
+            store.update_manual_market_price(
+                ticker=ticker,
+                price=price,
+                recorded_at=enrichment["refreshed_at"],
+            )
     if manual_tickers:
         record_manual_daily_performance_if_due()
     return updated_signals

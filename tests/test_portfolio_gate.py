@@ -252,6 +252,101 @@ class PortfolioGateTest(unittest.TestCase):
             },
         )
 
+    def test_price_refresh_forces_fresh_market_data_and_updates_open_position(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            signal = store.insert_signal(
+                ticker="HDC",
+                exchange="HOSE",
+                action="buy",
+                price=20,
+                timeframe="60",
+                strategy="RF Stock MTF",
+                note=None,
+                source_time="2026-09-23T10:00:00+07:00",
+                payload={
+                    "portfolio_gate": {
+                        "version": 1,
+                        "sleeve": "RF",
+                        "sector": "real_estate",
+                        "allocation_pct": 5,
+                        "position_strategy": "RF Stock MTF",
+                    }
+                },
+                enrichment={"status": "ok", "history": [{"close": 21}]},
+            )
+
+            class MarketStub:
+                calls = []
+
+                def enrich(self, ticker, force=False):
+                    self.calls.append((ticker, force))
+                    return {"status": "ok", "source": "test", "history": [{"close": 22}]}
+
+            market = MarketStub()
+            with patch.object(dashboard_main, "store", store), patch.object(
+                dashboard_main, "enricher", market
+            ):
+                updated = asyncio.run(
+                    dashboard_main.refresh_open_position_prices(include_manual=False)
+                )
+
+            self.assertEqual(updated, 1)
+            self.assertEqual(market.calls, [("HDC", True)])
+            self.assertEqual(
+                store.get_signal(signal["id"])["enrichment"]["history"][-1]["close"],
+                22,
+            )
+
+    def test_failed_price_refresh_preserves_the_last_valid_market_price(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            signal = store.insert_signal(
+                ticker="HDC",
+                exchange="HOSE",
+                action="buy",
+                price=20,
+                timeframe="60",
+                strategy="RF Stock MTF",
+                note=None,
+                source_time="2026-09-23T10:00:00+07:00",
+                payload={
+                    "portfolio_gate": {
+                        "version": 1,
+                        "sleeve": "RF",
+                        "sector": "real_estate",
+                        "allocation_pct": 5,
+                        "position_strategy": "RF Stock MTF",
+                    }
+                },
+                enrichment={
+                    "status": "ok",
+                    "refreshed_at": "2026-09-23T03:00:00+00:00",
+                    "history": [{"close": 21}],
+                },
+            )
+
+            class UnavailableMarketStub:
+                def enrich(self, ticker, force=False):
+                    return {
+                        "status": "unavailable",
+                        "message": "provider offline",
+                        "history": [],
+                    }
+
+            with patch.object(dashboard_main, "store", store), patch.object(
+                dashboard_main, "enricher", UnavailableMarketStub()
+            ):
+                updated = asyncio.run(
+                    dashboard_main.refresh_open_position_prices(include_manual=False)
+                )
+
+            stored = store.get_signal(signal["id"])["enrichment"]
+            self.assertEqual(updated, 0)
+            self.assertEqual(stored["status"], "ok")
+            self.assertEqual(stored["history"][-1]["close"], 21)
+            self.assertEqual(stored["refreshed_at"], "2026-09-23T03:00:00+00:00")
+
     def test_confirm_buy_is_a_constrained_top_up_of_a_gated_base_position(self):
         first = evaluate_portfolio_signal(
             payload={"strategy": "RF Stock MTF"},

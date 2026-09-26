@@ -953,6 +953,7 @@ Object.assign(translations.en, {
   language: "Language",
   syncing: "Syncing...",
   syncedJustNow: "Updated just now",
+  marketDataUnavailable: "Market price source is not configured",
   userOpenPositions: "Open positions",
   userOpenPl: "Estimated P/L",
   userTodaySignals: "Signals today",
@@ -972,6 +973,7 @@ Object.assign(translations.vi, {
   language: "Ngôn ngữ",
   syncing: "Đang đồng bộ...",
   syncedJustNow: "Vừa cập nhật",
+  marketDataUnavailable: "Chưa cấu hình nguồn giá thị trường",
   userOpenPositions: "Vị thế đang mở",
   userOpenPl: "Lãi/lỗ tạm tính",
   userTodaySignals: "Tín hiệu hôm nay",
@@ -1423,6 +1425,7 @@ const state = {
   dcaLevels: DEFAULT_DCA_LEVELS.map((level) => ({ ...level })),
   activeDcaPlanId: "",
   activeKellyEntryKey: "",
+  marketDataProvider: "",
   activeBacktestStatKey: "",
   activeBacktestStatId: "",
   closedTradeFilter: null,
@@ -3257,6 +3260,7 @@ async function refresh() {
   );
 
   state.defaultSignalWeightPct = Number(settingsPayload.default_signal_weight_pct) || FALLBACK_SIGNAL_WEIGHT_PCT;
+  state.marketDataProvider = String(settingsPayload.market_data_provider || "");
   state.summary = summary;
   state.signals = filterSignalsForWatchlist(signalsPayload.signals || []);
   renderSignals();
@@ -3305,7 +3309,9 @@ async function refresh() {
   renderRiskAlerts();
   await window.FundAnalytics?.refresh(state.user);
   state.lastRefreshAt = new Date();
-  els.syncStatus.textContent = t("syncedJustNow");
+  els.syncStatus.textContent = state.marketDataProvider === "unavailable"
+    ? t("marketDataUnavailable")
+    : t("syncedJustNow");
 
   const firstTicker = state.selectedTicker || state.signals[0]?.ticker || "";
   if (firstTicker) {
