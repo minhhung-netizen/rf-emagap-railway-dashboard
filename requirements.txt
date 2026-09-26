@@ -1,4 +1,5 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 tzdata>=2024.1
+vnai @ https://archive1.piwheels.org/simple/vnai/vnai-2.4.8-py3-none-any.whl#sha256=c41e5aee778283a06fc8f3e5e3b630b49c8c7c4063e114c04a3e9dde3ce13d8d
 vnstock @ git+https://github.com/thinh-vu/vnstock.git@8c2f4d7ec0da6044e01930c7907d860cb5b6879b
