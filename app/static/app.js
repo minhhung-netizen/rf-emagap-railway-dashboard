@@ -3777,8 +3777,13 @@ function renderPortfolioGate(gate) {
   els.portfolioGatePositions.textContent = Array.isArray(allOpen.positions)
     ? allOpen.positions.length
     : placeholder;
-  els.portfolioGateRf.textContent = percent(allOpen.by_sleeve_pct?.RF || 0);
-  els.portfolioGateEma.textContent = percent(allOpen.by_sleeve_pct?.EMA || 0);
+  const recommendedSleeves = recommendationAvailable ? current.by_sleeve_pct || {} : null;
+  els.portfolioGateRf.textContent = recommendedSleeves
+    ? percent(recommendedSleeves.RF || 0)
+    : placeholder;
+  els.portfolioGateEma.textContent = recommendedSleeves
+    ? percent(recommendedSleeves.EMA || 0)
+    : placeholder;
   els.portfolioGateSource.textContent = gate?.source_report_date
     ? `Snapshot ${formatDateOnly(gate.source_report_date)}`
     : "Dùng ràng buộc mặc định";
