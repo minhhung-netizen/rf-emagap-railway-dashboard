@@ -2,12 +2,12 @@
 
 ## Bắt đầu
 
-1. Đăng nhập quản trị → **Quản trị → NAV cuối ngày & chính sách rủi ro**.
+1. Đăng nhập quản trị → **Quản trị → NAV cuối ngày**. Chính sách cảnh báo nằm ở tab con **Chính sách rủi ro**.
 2. Nhập ngày, NAV, tiền mặt, danh mục và giá đóng cửa từ báo cáo đã đối chiếu.
    Mọi giá và số tiền ở đây dùng **VND**, không phải nghìn đồng như webhook.
 3. Lưu NAV; mở **Hiệu suất** để xem NAV/TWR, hoặc **Tổng quan** để xem rủi ro
    theo giá thị trường. Cần ít nhất hai ngày để tính lợi nhuận.
-4. Để nhập lịch sử, tải mẫu JSON trong phần **Nhập/xuất nhiều ngày**, điền dữ liệu
+4. Để nhập lịch sử, tải mẫu JSON trong **Quản trị → Dữ liệu & sao lưu**, điền dữ liệu
    rồi nhập tệp. Tối đa 2.000 ngày/lần; giao diện giới hạn tệp 5 MB.
 
 Không tự tạo số dư tài khoản từ webhook. Chưa có đồng bộ NAV với công ty chứng
@@ -107,15 +107,16 @@ lượng tín hiệu. Cần khai báo đủ P/L, kể cả mã bán hết; luồ
 có thể làm sai lệch phép xấp xỉ này.
 
 **Chặn phân bổ mới mặc định tắt.** Khi quản trị bật, webhook `buy`/`confirm_buy`
-không được duyệt nếu chưa có NAV, NAV quá tuổi, vượt trần mã/ngành/nhóm/tổng
-exposure hoặc drawdown chạm ngưỡng dừng. Vẫn trả HTTP 200 và lưu nhật ký
+thuộc danh sách rebalance đúng RF/EMA sleeve không được duyệt nếu chưa có NAV,
+NAV quá tuổi, vượt trần theo NAV hoặc drawdown chạm ngưỡng dừng. Mã ngoài danh
+sách vẫn được theo dõi. Tín hiệu bị chặn trả HTTP 200 và lưu nhật ký
 `nav_risk_pause`; `sell`/`confirm_sell` vẫn qua quy tắc gate bình thường.
 Chuỗi NAV/dòng tiền làm tràn giới hạn biểu diễn TWR cũng yêu cầu rà soát và chặn
-phân bổ nếu chính sách đang bật, thay vì trả số vô hạn hoặc bỏ qua kiểm soát.
+phân bổ được quản lý nếu chính sách đang bật, thay vì trả số vô hạn hoặc bỏ qua kiểm soát.
 Không tự đóng vị thế, không đặt lệnh tại công ty chứng khoán, không tự hủy lệnh.
 Cảnh báo stop/ngân sách không tự kích hoạt chặn. Kiểm tra NAV này dựa trên trạng
-thái đã ghi nhận, không mô phỏng số lượng khớp của một lệnh sắp tới; gate cũ
-tiếp tục kiểm soát riêng phân bổ tín hiệu.
+thái đã ghi nhận, không mô phỏng số lượng khớp của một lệnh sắp tới; Portfolio
+Gate tiếp tục kiểm soát phân bổ tín hiệu trong danh sách rebalance.
 
 ## Lưu trữ, quyền và API
 

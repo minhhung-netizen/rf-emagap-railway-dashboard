@@ -1,6 +1,6 @@
 # Sổ giao dịch, NAV và kiểm chứng dữ liệu
 
-Mở **Quản trị → Sổ giao dịch + NAV + đối soát dữ liệu**. Chỉ quản trị viên
+Mở **Quản trị → Sổ giao dịch**. Chỉ quản trị viên
 được đọc/ghi sổ chi tiết. NAV đã chốt được dùng trong **Hiệu suất NAV** và
 **Rủi ro theo giá thị trường**, theo quyền xem toàn danh mục hiện có.
 

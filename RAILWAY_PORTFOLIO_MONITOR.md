@@ -17,12 +17,14 @@ Local RF + EMA backtest -- BACKTEST_INGEST_TOKEN --> /api/portfolio-backtests/im
                                                   --> portfolio monitor baseline
 ```
 
-The Portfolio Gate monitor distinguishes two exposures: **rebalance-recommended
-exposure** counts only open positions whose ticker appears in the latest list
-for that position's own RF or EMA strategy; **active gate exposure** counts every open gate
-position for hard caps. A holding outside the latest recommendation is therefore
-not presented as currently recommended, but it still consumes the gate's ticker,
-sector, sleeve, and total-exposure limits until its sell signal is received.
+The Portfolio Gate monitor distinguishes **rebalance-managed exposure** from
+all tracked positions. Only open positions whose ticker appears in the latest
+list for their own RF or EMA sleeve count toward the total, ticker, sector and
+sleeve caps. Signals outside the matching list are still accepted and tracked
+in Positions, even when the total tracked allocation exceeds a gate cap. If
+there is no valid rebalance list, the gate tracks positions without applying
+rebalance caps. Validation, duplicate detection and position matching still
+apply to every signal. See [DASHBOARD_GUIDE.md](DASHBOARD_GUIDE.md).
 
 In **Performance**, the signal report can be switched between all gate signals
 and matching ticker/strategy pairs in the latest rebalance. The switch changes its metrics, equity
@@ -109,9 +111,9 @@ only top up a base position previously accepted by the portfolio gate:
 }
 ```
 
-Every new allocation is rejected when it would exceed the latest snapshot's
-total-exposure, ticker, sector, RF-sleeve, or EMA-sleeve limit. Duplicate
-signals are also rejected. The webhook response returns the accepted
+New allocations in the matching rebalance list are rejected when they would
+exceed the latest snapshot's total-exposure, ticker, sector, RF-sleeve, or
+EMA-sleeve limit. Duplicate signals are also detected. The webhook response returns the accepted
 classification or rejection reason; the **RF + EMA Monitor** and **Logs** tabs
 show the same result. Signals from before this gate version are marked
 `Legacy` and do not consume the new gate's exposure.
