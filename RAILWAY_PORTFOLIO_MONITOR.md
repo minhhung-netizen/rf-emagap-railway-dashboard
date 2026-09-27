@@ -120,9 +120,22 @@ show the same result. Signals from before this gate version are marked
 
 ## Publish a local RF + EMA snapshot
 
-From the `Tradingview backtest` project, run:
+From the `Tradingview backtest` project, launch TradingView through the repository launcher before refreshing EMA Gap. Do not open it from the Start Menu or use port `9222` on this machine.
 
 ```powershell
+npm.cmd run tv -- launch --port 9223
+$env:TV_CDP_PORT = "9223"
+npm.cmd run tv -- status
+npm.cmd run tv -- layout switch "EMAgap Stock"
+npm.cmd run tv -- state
+```
+
+Continue only when `status` reports `cdp_connected: true` and the `studies` list includes `EMA Gap`. If the loaded study is `RF Stock Rebalance`, switch the layout again. Do not close TradingView or change its chart/layout while a scan is running. The complete recovery and refresh procedure is in [DASHBOARD_GUIDE.md](DASHBOARD_GUIDE.md#lam-moi-ema-gap-qua-tradingview-cdp).
+
+Then run:
+
+```powershell
+npm.cmd run emagap:refresh
 npm.cmd run rf:emagap:combined
 npm.cmd run rf:dashboard:export
 

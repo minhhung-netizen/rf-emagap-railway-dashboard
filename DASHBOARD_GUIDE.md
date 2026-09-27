@@ -129,6 +129,37 @@ Bản Railway này chỉ vận hành cổ phiếu RF/EMA và tín hiệu sớm. 
 
 ## 7. Rebalance và Portfolio Gate
 
+### Làm mới EMA Gap qua TradingView CDP
+
+Mọi lần quét/làm mới EMA Gap phải mở TradingView bằng launcher của dự án `C:\Users\Minh Hung\Documents\Tradingview backtest`. Không mở TradingView từ Start Menu trước, không tự gọi `TradingView.exe --remote-debugging-port=...`, và không dùng cổng `9222` vì máy này dành cổng đó cho Lenovo Vantage.
+
+Mở PowerShell mới và chạy lần lượt:
+
+```powershell
+cd "C:\Users\Minh Hung\Documents\Tradingview backtest"
+npm.cmd run tv -- launch --port 9223
+
+$env:TV_CDP_PORT = "9223"
+npm.cmd run tv -- status
+```
+
+Launcher tự đóng phiên TradingView cũ, tìm ứng dụng TradingView Windows Store, khởi động với CDP tại cổng `9223` và chờ kết nối sẵn sàng. Chỉ tiếp tục khi kết quả `status` có `"success": true`, `"cdp_connected": true` và `target_url` là chart `https://vn.tradingview.com/chart/...`.
+
+Sau khi TradingView hiện chart, nạp layout rồi kiểm tra chiến lược:
+
+```powershell
+npm.cmd run tv -- layout switch "EMAgap Stock"
+npm.cmd run tv -- state
+```
+
+Trong `studies` phải có tên chứa `EMA Gap`. Nếu chỉ có `RF Stock Rebalance`, layout đang nạp sai; chưa chạy refresh vì chương trình sẽ báo `Loaded strategy mismatch`. Khi kiểm tra đúng, mới chạy:
+
+```powershell
+npm.cmd run emagap:refresh
+```
+
+Không đóng TradingView, đổi chart/layout hoặc chạy thêm một refresh trong lúc quét 89 mã. Nếu TradingView đã được mở sai cách hay CDP mất kết nối, chạy lại `npm.cmd run tv -- launch --port 9223`; launcher sẽ thay phiên cũ bằng phiên đúng.
+
 Snapshot mới nhất nhập qua `POST /api/portfolio-backtests/import` với header `X-Backtest-Ingest-Token`. Payload gồm `source`, `report_date`, `title`, `research_status` (có mặc định), `generated_at` (tùy chọn) và `summary`. Danh sách ở `summary.attention_lists.rf.rows` và `summary.attention_lists.ema.rows`; mỗi dòng cần `ticker`. Báo cáo RF cũ có thể dùng `summary.attention_list.rows`. Cấu trúc tối thiểu:
 
 ```json
@@ -203,4 +234,4 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
-| 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve và vị thế ngoài danh sách vẫn được theo dõi. |
+| 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve, vị thế ngoài danh sách vẫn được theo dõi và quy trình CDP bắt buộc trước khi refresh EMA Gap. |
