@@ -931,19 +931,41 @@
                 <div class="workflowCommand">npm.cmd run rf:research</div>
               </div>
             </article>
-            <article class="workflowStep">
+            <article class="workflowStep workflowStepWide">
               <span class="workflowNumber">04</span>
+              <div>
+                <p class="eyebrow">Trước mỗi EMA Gap refresh</p>
+                <h3>Mở TradingView bằng CDP</h3>
+                <p>Chỉ dùng launcher của dự án backtest. Launcher tự đóng phiên cũ, mở đúng ứng dụng Windows Store và chờ CDP tại cổng 9223 sẵn sàng.</p>
+                <div class="workflowCommandGroup" aria-label="Lệnh kết nối TradingView CDP">
+                  <div class="workflowCommand">cd "C:\Users\Minh Hung\Documents\Tradingview backtest"</div>
+                  <div class="workflowCommand">npm.cmd run tv -- launch --port 9223</div>
+                  <div class="workflowCommand">$env:TV_CDP_PORT = "9223"</div>
+                  <div class="workflowCommand">npm.cmd run tv -- status</div>
+                  <div class="workflowCommand">npm.cmd run tv -- layout switch "EMAgap Stock"</div>
+                  <div class="workflowCommand">npm.cmd run tv -- state</div>
+                </div>
+                <ol class="workflowCheckList">
+                  <li>Chỉ chạy bước tiếp theo khi `status` có `success: true`, `cdp_connected: true` và URL chart TradingView.</li>
+                  <li>`studies` phải có `EMA Gap`. Nếu thấy `RF Stock Rebalance`, chạy lại lệnh chuyển layout; chưa refresh.</li>
+                  <li>Không mở TradingView từ Start Menu, không dùng cổng 9222 và không tự chạy `TradingView.exe` với tham số CDP.</li>
+                  <li>Nếu kết nối lỗi, chạy lại launcher. Không đóng TradingView, đổi chart/layout hay chạy refresh thứ hai trong lúc quét 89 mã.</li>
+                </ol>
+              </div>
+            </article>
+            <article class="workflowStep">
+              <span class="workflowNumber">05</span>
               <div>
                 <p class="eyebrow">EMA Gap · mỗi 6 tháng</p>
                 <h3>Làm mới dữ liệu Daily và tái xếp hạng</h3>
-                <p>Đồng bộ dữ liệu TradingView, kiểm tra đủ lịch sử, sau đó chạy chu kỳ EMA. Chu kỳ chỉ tái cơ cấu khi đã đến hạn; lịch sử và audit được lưu lại để so sánh.</p>
+                <p>Sau khi xác nhận CDP và chiến lược đúng, đồng bộ dữ liệu TradingView, kiểm tra đủ lịch sử, rồi chạy chu kỳ EMA. Chu kỳ chỉ tái cơ cấu khi đã đến hạn; lịch sử và audit được lưu để so sánh.</p>
                 <div class="workflowCommand">npm.cmd run emagap:refresh</div>
                 <div class="workflowCommand">npm.cmd run emagap:cycle</div>
                 <div class="workflowCommand">npm.cmd run emagap:status</div>
               </div>
             </article>
             <article class="workflowStep">
-              <span class="workflowNumber">05</span>
+              <span class="workflowNumber">06</span>
               <div>
                 <p class="eyebrow">Trước khi thực hiện</p>
                 <h3>Chốt danh sách rebalance</h3>
@@ -956,7 +978,7 @@
               </div>
             </article>
             <article class="workflowStep">
-              <span class="workflowNumber">06</span>
+              <span class="workflowNumber">07</span>
               <div>
                 <p class="eyebrow">Sau khi kiểm tra</p>
                 <h3>Xuất và công bố snapshot</h3>

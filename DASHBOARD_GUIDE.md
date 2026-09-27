@@ -191,7 +191,7 @@ Kiểm tra đầu vào vẫn áp dụng cho mọi webhook: secret, action/sleeve
 | **Vị thế** | Vị thế Gate mở/đóng, giá, lợi nhuận ước tính, bộ lọc, đối chiếu rebalance |
 | **Hiệu suất** | NAV/TWR/XIRR nếu có NAV; thống kê tín hiệu riêng với phạm vi toàn Gate hoặc rebalance mới nhất |
 | **RF + EMA Monitor** | Snapshot backtest, exposure trong danh sách, số vị thế theo dõi, danh sách RF/EMA và trần |
-| **Quy trình vận hành** | Lịch rebalance và các bước cập nhật snapshot; lệnh npm thuộc dự án backtest riêng |
+| **Quy trình vận hành** | Lịch rebalance, checklist CDP TradingView trước khi refresh EMA Gap và các bước cập nhật snapshot; lệnh npm thuộc dự án backtest riêng |
 | **Cổ tức** | Lịch quyền/cổ tức, nhập thủ công và kiểm tra mã đang mở |
 | **Nhật ký** | Webhook trùng/bị từ chối cùng lý do |
 | **Quản trị** | Sổ giao dịch, NAV, chính sách rủi ro, dữ liệu/sao lưu, tài khoản, nhóm ngành |
@@ -234,4 +234,4 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
-| 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve, vị thế ngoài danh sách vẫn được theo dõi và quy trình CDP bắt buộc trước khi refresh EMA Gap. |
+| 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve, vị thế ngoài danh sách vẫn được theo dõi, quy trình CDP bắt buộc trước khi refresh EMA Gap và checklist này trong tab Quy trình vận hành. |

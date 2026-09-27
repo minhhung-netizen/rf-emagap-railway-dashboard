@@ -1733,6 +1733,11 @@ main {
   padding: 16px;
 }
 
+.workflowStepWide {
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel-raised));
+  grid-column: 1 / -1;
+}
+
 .workflowNumber {
   align-items: center;
   background: color-mix(in srgb, var(--accent) 16%, var(--panel));
@@ -1751,6 +1756,27 @@ main {
 .workflowStep > div { min-width: 0; }
 .workflowStep p:not(.eyebrow) { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 8px 0; }
 .workflowStep ol { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 8px 0 0; padding-left: 18px; }
+
+.workflowCommandGroup {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 9px;
+}
+
+.workflowCommandGroup .workflowCommand {
+  margin-top: 0;
+}
+
+.workflowCheckList {
+  columns: 2;
+  column-gap: 30px;
+}
+
+.workflowCheckList li {
+  break-inside: avoid;
+  margin-bottom: 7px;
+}
 
 .workflowCommand {
   background: color-mix(in srgb, var(--field) 88%, var(--panel));
@@ -2594,6 +2620,14 @@ td strong {
 
   .riskMetrics {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .workflowCommandGroup {
+    grid-template-columns: 1fr;
+  }
+
+  .workflowCheckList {
+    columns: 1;
   }
 
   .recentTradeBanner {
