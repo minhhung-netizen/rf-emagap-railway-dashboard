@@ -895,46 +895,10 @@
           </section>
 
           <section class="workflowSteps">
-            <article class="workflowStep">
+            <article class="workflowStep workflowStepWide">
               <span class="workflowNumber">01</span>
               <div>
-                <p class="eyebrow">Mỗi ngày giao dịch</p>
-                <h3>Nhận và kiểm tra tín hiệu</h3>
-                <p>TradingView gửi alert vào webhook. Dashboard xác định sleeve RF/EMA, chuẩn hóa mã, đối chiếu ngành, giới hạn exposure và ghi rõ lý do khi tín hiệu bị loại.</p>
-                <ol>
-                  <li>Kiểm tra tab Tổng quan và Vị thế sau phiên.</li>
-                  <li>Ưu tiên tín hiệu “được nhận”; xem Nhật ký để hiểu tín hiệu bị chặn.</li>
-                  <li>Chỉ đặt lệnh sau khi xác nhận thanh khoản và giá thực tế.</li>
-                </ol>
-              </div>
-            </article>
-            <article class="workflowStep">
-              <span class="workflowNumber">02</span>
-              <div>
-                <p class="eyebrow">Hàng tuần</p>
-                <h3>Kiểm soát rủi ro danh mục</h3>
-                <p>Đối chiếu số vị thế, exposure tổng và tỷ trọng từng ngành ở tab RF + EMA Monitor. Không tăng tỷ trọng chỉ vì một tín hiệu lặp lại.</p>
-                <ol>
-                  <li>Rà vị thế đã đóng, vị thế cần chú ý và cổ tức sắp chốt quyền.</li>
-                  <li>Kiểm tra mã/ngành nào đang sát trần phân bổ.</li>
-                  <li>Ghi lại mọi ngoại lệ thực hiện để so sánh với backtest.</li>
-                </ol>
-              </div>
-            </article>
-            <article class="workflowStep">
-              <span class="workflowNumber">03</span>
-              <div>
-                <p class="eyebrow">RF · mỗi 3 tháng</p>
-                <h3>Cập nhật RF Stock MTF 60 phút</h3>
-                <p>Chạy lại toàn bộ alert universe trên TradingView với đúng profile RF Stock MTF và khung 60 phút. Sau đó thực hiện walk-forward, kiểm tra chi phí giao dịch và xuất snapshot mới.</p>
-                <div class="workflowCommand">npm.cmd run rf:run</div>
-                <div class="workflowCommand">npm.cmd run rf:research</div>
-              </div>
-            </article>
-            <article class="workflowStep workflowStepWide">
-              <span class="workflowNumber">04</span>
-              <div>
-                <p class="eyebrow">Trước mỗi EMA Gap refresh</p>
+                <p class="eyebrow">Khởi tạo phiên backtest</p>
                 <h3>Mở TradingView bằng CDP</h3>
                 <p>Chỉ dùng launcher của dự án backtest. Launcher tự đóng phiên cũ, mở đúng ứng dụng Windows Store và chờ CDP tại cổng 9223 sẵn sàng.</p>
                 <div class="workflowCommandGroup" aria-label="Lệnh kết nối TradingView CDP">
@@ -954,7 +918,17 @@
               </div>
             </article>
             <article class="workflowStep">
-              <span class="workflowNumber">05</span>
+              <span class="workflowNumber">02</span>
+              <div>
+                <p class="eyebrow">RF · mỗi 3 tháng</p>
+                <h3>Cập nhật RF Stock MTF 60 phút</h3>
+                <p>Chạy lại toàn bộ alert universe trên TradingView với đúng profile RF Stock MTF và khung 60 phút. Sau đó thực hiện walk-forward, kiểm tra chi phí giao dịch và xuất kết quả RF mới.</p>
+                <div class="workflowCommand">npm.cmd run rf:run</div>
+                <div class="workflowCommand">npm.cmd run rf:research</div>
+              </div>
+            </article>
+            <article class="workflowStep">
+              <span class="workflowNumber">03</span>
               <div>
                 <p class="eyebrow">EMA Gap · mỗi 6 tháng</p>
                 <h3>Làm mới dữ liệu Daily và tái xếp hạng</h3>
@@ -965,9 +939,20 @@
               </div>
             </article>
             <article class="workflowStep">
-              <span class="workflowNumber">06</span>
+              <span class="workflowNumber">04</span>
               <div>
-                <p class="eyebrow">Trước khi thực hiện</p>
+                <p class="eyebrow">Sau khi chạy RF + EMA</p>
+                <h3>Xuất và công bố snapshot</h3>
+                <p>Ghép hai sleeve, xuất dữ liệu và gửi lên dashboard. Snapshot mới trở thành chuẩn cho Portfolio Gate, tab Monitor và lịch nhắc kỳ tiếp theo.</p>
+                <div class="workflowCommand">npm.cmd run rf:emagap:combined</div>
+                <div class="workflowCommand">npm.cmd run rf:dashboard:export</div>
+                <div class="workflowCommand">npm.cmd run rf:dashboard:publish</div>
+              </div>
+            </article>
+            <article class="workflowStep">
+              <span class="workflowNumber">05</span>
+              <div>
+                <p class="eyebrow">Sau khi snapshot đã lên Dashboard</p>
                 <h3>Chốt danh sách rebalance</h3>
                 <p>Đọc danh sách chú ý EMA và RF trong tab Monitor. Mã “Mới vào” là ứng viên thêm; “Giữ lại” tiếp tục nắm giữ. Kiểm tra lại trần ngành, trần mã, exposure và tỷ trọng sleeve trước khi gửi lệnh.</p>
                 <ol>
@@ -978,14 +963,29 @@
               </div>
             </article>
             <article class="workflowStep">
+              <span class="workflowNumber">06</span>
+              <div>
+                <p class="eyebrow">Mỗi ngày giao dịch</p>
+                <h3>Nhận và kiểm tra tín hiệu</h3>
+                <p>TradingView gửi alert vào webhook. Dashboard xác định sleeve RF/EMA, chuẩn hóa mã, đối chiếu ngành, giới hạn exposure và ghi rõ lý do khi tín hiệu bị loại.</p>
+                <ol>
+                  <li>Kiểm tra tab Tổng quan và Vị thế sau phiên.</li>
+                  <li>Ưu tiên tín hiệu “được nhận”; xem Nhật ký để hiểu tín hiệu bị chặn.</li>
+                  <li>Chỉ đặt lệnh sau khi xác nhận thanh khoản và giá thực tế.</li>
+                </ol>
+              </div>
+            </article>
+            <article class="workflowStep">
               <span class="workflowNumber">07</span>
               <div>
-                <p class="eyebrow">Sau khi kiểm tra</p>
-                <h3>Xuất và công bố snapshot</h3>
-                <p>Sau khi kiểm tra số liệu, ghép hai sleeve, xuất dữ liệu và gửi lên dashboard. Snapshot mới trở thành chuẩn cho cổng tín hiệu và lịch nhắc kỳ tiếp theo.</p>
-                <div class="workflowCommand">npm.cmd run rf:emagap:combined</div>
-                <div class="workflowCommand">npm.cmd run rf:dashboard:export</div>
-                <div class="workflowCommand">npm.cmd run rf:dashboard:publish</div>
+                <p class="eyebrow">Hàng tuần</p>
+                <h3>Kiểm soát rủi ro danh mục</h3>
+                <p>Đối chiếu số vị thế, exposure tổng và tỷ trọng từng ngành ở tab RF + EMA Monitor. Không tăng tỷ trọng chỉ vì một tín hiệu lặp lại.</p>
+                <ol>
+                  <li>Rà vị thế đã đóng, vị thế cần chú ý và cổ tức sắp chốt quyền.</li>
+                  <li>Kiểm tra mã/ngành nào đang sát trần phân bổ.</li>
+                  <li>Ghi lại mọi ngoại lệ thực hiện để so sánh với backtest.</li>
+                </ol>
               </div>
             </article>
           </section>
