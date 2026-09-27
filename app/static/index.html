@@ -922,9 +922,10 @@
               <div>
                 <p class="eyebrow">RF · mỗi 3 tháng</p>
                 <h3>Cập nhật RF Stock MTF 60 phút</h3>
-                <p>Chạy lại toàn bộ alert universe trên TradingView với đúng profile RF Stock MTF và khung 60 phút. Sau đó thực hiện walk-forward, kiểm tra chi phí giao dịch và xuất kết quả RF mới.</p>
+                <p>Chạy lại toàn bộ alert universe trên TradingView với đúng profile RF Stock MTF và khung 60 phút. Lệnh publish RF quý chỉ thay danh sách RF, giữ nguyên EMA gần nhất để hai chu kỳ không cần trùng nhau.</p>
                 <div class="workflowCommand">npm.cmd run rf:run</div>
                 <div class="workflowCommand">npm.cmd run rf:research</div>
+                <div class="workflowCommand">npm.cmd run rf:dashboard:publish-quarterly</div>
               </div>
             </article>
             <article class="workflowStep">
@@ -943,7 +944,7 @@
               <div>
                 <p class="eyebrow">Sau khi chạy RF + EMA</p>
                 <h3>Xuất và công bố snapshot</h3>
-                <p>Ghép hai sleeve, xuất dữ liệu và gửi lên dashboard. Snapshot mới trở thành chuẩn cho Portfolio Gate, tab Monitor và lịch nhắc kỳ tiếp theo.</p>
+                <p>Đến kỳ EMA sáu tháng, ghép RF mới nhất với EMA vừa chạy, xuất dữ liệu và gửi lên dashboard. Snapshot đầy đủ trở thành chuẩn mới cho cả hai sleeve.</p>
                 <div class="workflowCommand">npm.cmd run rf:emagap:combined</div>
                 <div class="workflowCommand">npm.cmd run rf:dashboard:export</div>
                 <div class="workflowCommand">npm.cmd run rf:dashboard:publish</div>

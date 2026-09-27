@@ -160,6 +160,16 @@ npm.cmd run emagap:refresh
 
 Không đóng TradingView, đổi chart/layout hoặc chạy thêm một refresh trong lúc quét 89 mã. Nếu TradingView đã được mở sai cách hay CDP mất kết nối, chạy lại `npm.cmd run tv -- launch --port 9223`; launcher sẽ thay phiên cũ bằng phiên đúng.
 
+### Chu kỳ RF và EMA không trùng nhau
+
+RF Stock MTF chạy theo quý, EMA Gap chạy theo chu kỳ sáu tháng. Không chờ hai chiến lược chạy cùng lúc. Sau khi hoàn tất `rf:run` và `rf:research`, chạy lệnh sau để cập nhật riêng RF lên Railway:
+
+```powershell
+npm.cmd run rf:dashboard:publish-quarterly
+```
+
+Lệnh này thay danh sách rebalance RF trong snapshot local, giữ nguyên danh sách EMA gần nhất, rồi publish với `source` là `rf-stock-mtf-quarterly`. Nó dừng với lỗi nếu chưa có snapshot đầy đủ trước đó hoặc snapshot đó không có danh sách EMA, nhằm tránh làm trống Gate EMA. Đến kỳ EMA, chạy luồng đầy đủ: `emagap:refresh`, `emagap:cycle`, `rf:emagap:combined`, `rf:dashboard:export`, rồi `rf:dashboard:publish`.
+
 Snapshot mới nhất nhập qua `POST /api/portfolio-backtests/import` với header `X-Backtest-Ingest-Token`. Payload gồm `source`, `report_date`, `title`, `research_status` (có mặc định), `generated_at` (tùy chọn) và `summary`. Danh sách ở `summary.attention_lists.rf.rows` và `summary.attention_lists.ema.rows`; mỗi dòng cần `ticker`. Báo cáo RF cũ có thể dùng `summary.attention_list.rows`. Cấu trúc tối thiểu:
 
 ```json
@@ -234,4 +244,4 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
-| 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve, vị thế ngoài danh sách vẫn được theo dõi, quy trình CDP bắt buộc trước khi refresh EMA Gap và checklist trong tab Quy trình vận hành theo thứ tự thực thi. |
+| 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve, vị thế ngoài danh sách vẫn được theo dõi, quy trình CDP bắt buộc trước khi refresh EMA Gap, checklist theo thứ tự thực thi và publish RF quý giữ EMA gần nhất. |

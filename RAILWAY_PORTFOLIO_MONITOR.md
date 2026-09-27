@@ -120,6 +120,8 @@ show the same result. Signals from before this gate version are marked
 
 ## Publish a local RF + EMA snapshot
 
+RF runs quarterly while EMA Gap runs every six months. After a standalone RF run, use `npm.cmd run rf:dashboard:publish-quarterly`. It replaces only the RF rebalance list and preserves the most recently published EMA list. It refuses to publish when the local dashboard snapshot has no EMA list, so it cannot silently disable the EMA Gate.
+
 From the `Tradingview backtest` project, launch TradingView through the repository launcher before refreshing EMA Gap. Do not open it from the Start Menu or use port `9222` on this machine.
 
 ```powershell
