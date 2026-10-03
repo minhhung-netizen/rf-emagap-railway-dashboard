@@ -1,6 +1,6 @@
 # Hướng dẫn RF + EMA Portfolio Gate Dashboard
 
-Cập nhật: 27/09/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
+Cập nhật: 03/10/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
 
 ## 1. Phạm vi và nguồn dữ liệu
 
@@ -200,7 +200,7 @@ Kiểm tra đầu vào vẫn áp dụng cho mọi webhook: secret, action/sleeve
 | **Tín hiệu sớm** | Inertial RSI, thời gian hiệu lực, trạng thái khớp `buy` RF/EMA |
 | **Vị thế** | Vị thế Gate mở/đóng, giá, lợi nhuận ước tính, bộ lọc, đối chiếu rebalance |
 | **Hiệu suất** | NAV/TWR/XIRR nếu có NAV; thống kê tín hiệu riêng với phạm vi toàn Gate hoặc rebalance mới nhất |
-| **RF + EMA Monitor** | Snapshot backtest, exposure trong danh sách, số vị thế theo dõi, danh sách RF/EMA và trần |
+| **RF + EMA Monitor** | Snapshot backtest, exposure trong danh sách, số vị thế theo dõi, danh sách RF Stock MTF hiển thị trước EMA Gap Daily và trần |
 | **Quy trình vận hành** | Lịch rebalance và chuỗi thao tác theo thứ tự CDP TradingView → RF → EMA Gap → publish snapshot → chốt rebalance → theo dõi; lệnh npm thuộc dự án backtest riêng |
 | **Cổ tức** | Lịch quyền/cổ tức, nhập thủ công và kiểm tra mã đang mở |
 | **Nhật ký** | Webhook trùng/bị từ chối cùng lý do |
@@ -244,4 +244,5 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
+| 03/10/2026 | Đưa toàn bộ chỉ số và bảng rebalance RF Stock MTF lên trên EMA Gap Daily trong tab RF + EMA Monitor. |
 | 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve, vị thế ngoài danh sách vẫn được theo dõi, quy trình CDP bắt buộc trước khi refresh EMA Gap, checklist theo thứ tự thực thi và publish RF quý giữ EMA gần nhất. |
