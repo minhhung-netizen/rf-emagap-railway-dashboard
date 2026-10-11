@@ -26,6 +26,8 @@ const els = {
   table: document.querySelector("#signalsTable"),
   signalCards: document.querySelector("#signalCards"),
   leadingSignalStatus: document.querySelector("#leadingSignalStatus"),
+  leadingSignalSectorFilter: document.querySelector("#leadingSignalSectorFilter"),
+  leadingSignalSortButtons: document.querySelectorAll("[data-leading-sort]"),
   leadingSignalsTable: document.querySelector("#leadingSignalsTable"),
   openPositionsTable: document.querySelector("#openPositionsTable"),
   openPositionCards: document.querySelector("#openPositionCards"),
@@ -1419,6 +1421,7 @@ const state = {
   recentTradeBannerHidden: localStorage.getItem("dashboardRecentTradeBannerHidden") === "true",
   signals: [],
   leadingSignals: [],
+  leadingSignalSort: { key: "detected_at", direction: "desc" },
   openTrades: [],
   closedTrades: [],
   performanceClosedTrades: [],
@@ -6210,17 +6213,104 @@ function summarizeSignals(signals) {
   };
 }
 
-function renderLeadingSignals() {
-  const rows = (state.leadingSignals || []).filter((row) =>
+function activeLeadingSignals() {
+  return (state.leadingSignals || []).filter((row) =>
     row.is_active ?? (row.status === "active" || String(row.status).startsWith("matched"))
   );
+}
+
+function updateLeadingSignalSectorFilter(rows) {
+  if (!els.leadingSignalSectorFilter) return;
+  const currentValue = els.leadingSignalSectorFilter.value;
+  const sectors = [...new Set(rows.map((row) => String(row.sector || "").trim()).filter(Boolean))];
+  if (currentValue && currentValue !== "__unmapped__" && !sectors.includes(currentValue)) {
+    sectors.push(currentValue);
+  }
+  sectors.sort((left, right) => left.localeCompare(right, "vi"));
+  els.leadingSignalSectorFilter.replaceChildren(new Option("Tất cả ngành", ""));
+  sectors.forEach((sector) => els.leadingSignalSectorFilter.append(new Option(sector, sector)));
+  els.leadingSignalSectorFilter.append(new Option("Chưa phân ngành", "__unmapped__"));
+  els.leadingSignalSectorFilter.value = currentValue;
+}
+
+function leadingSignalSortValue(row, key) {
+  if (key === "event") return leadingEventLabel(row.event || row.action);
+  if (key === "status") return leadingSignalStatus(row).label;
+  const value = row[key];
+  if (value == null || value === "") return null;
+  if (["detected_at", "pivot_time"].includes(key)) {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
+  }
+  if (["price", "valid_for_days", "lead_days"].includes(key)) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+  return String(value).trim() || null;
+}
+
+function sortLeadingSignals(rows) {
+  const { key, direction } = state.leadingSignalSort;
+  const multiplier = direction === "asc" ? 1 : -1;
+  return [...rows].sort((left, right) => {
+    const leftValue = leadingSignalSortValue(left, key);
+    const rightValue = leadingSignalSortValue(right, key);
+    // Missing values stay last in both directions, including absent pivot dates.
+    if (leftValue == null && rightValue != null) return 1;
+    if (rightValue == null && leftValue != null) return -1;
+    const comparison = leftValue == null ? 0 : typeof leftValue === "number"
+      ? leftValue - rightValue
+      : leftValue.localeCompare(rightValue, "vi", { numeric: true, sensitivity: "base" });
+    return comparison * multiplier
+      || (Date.parse(right.detected_at) || 0) - (Date.parse(left.detected_at) || 0)
+      || Number(right.id || 0) - Number(left.id || 0);
+  });
+}
+
+function updateLeadingSignalSortHeaders() {
+  els.leadingSignalSortButtons.forEach((button) => {
+    const active = button.dataset.leadingSort === state.leadingSignalSort.key;
+    const direction = active ? state.leadingSignalSort.direction : "none";
+    const label = button.querySelector("span").textContent;
+    button.closest("th").setAttribute("aria-sort", direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none");
+    const nextDirection = active ? (direction === "asc" ? "desc" : "asc") : defaultLeadingSignalSortDirection(button.dataset.leadingSort);
+    const title = `${label}: sắp xếp ${nextDirection === "asc" ? "tăng" : "giảm"} dần`;
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    button.querySelector("use").setAttribute("href", `/static/vendor/lucide-table.svg#${direction === "none" ? "arrow-up-down" : direction === "asc" ? "arrow-up" : "arrow-down"}`);
+  });
+}
+
+function defaultLeadingSignalSortDirection(key) {
+  return ["price", "detected_at", "pivot_time", "valid_for_days", "lead_days"].includes(key) ? "desc" : "asc";
+}
+
+function toggleLeadingSignalSort(key) {
+  const current = state.leadingSignalSort;
+  state.leadingSignalSort = {
+    key,
+    direction: current.key === key ? (current.direction === "asc" ? "desc" : "asc") : defaultLeadingSignalSortDirection(key),
+  };
+  renderLeadingSignals();
+}
+
+function renderLeadingSignals() {
+  const activeRows = activeLeadingSignals();
+  updateLeadingSignalSectorFilter(activeRows);
+  updateLeadingSignalSortHeaders();
+  const sector = els.leadingSignalSectorFilter?.value || "";
+  const rows = sortLeadingSignals(activeRows.filter((row) => {
+    const rowSector = String(row.sector || "").trim();
+    return !sector || (sector === "__unmapped__" ? !rowSector : rowSector === sector);
+  }));
+  const isAdmin = state.user?.role === "admin";
   if (els.leadingSignalStatus) {
     const matched = rows.filter((row) => row.matched_signal_id != null).length;
-    els.leadingSignalStatus.textContent = `${rows.length} còn hiệu lực · ${matched} đã khớp RF/EMA`;
+    els.leadingSignalStatus.textContent = `${rows.length}${sector ? `/${activeRows.length}` : ""} còn hiệu lực · ${matched} đã khớp RF/EMA`;
   }
   if (!els.leadingSignalsTable) return;
   if (!rows.length) {
-    els.leadingSignalsTable.innerHTML = '<tr><td class="empty" colspan="9">Không có tín hiệu sớm còn hiệu lực.</td></tr>';
+    els.leadingSignalsTable.innerHTML = `<tr><td class="empty" colspan="${isAdmin ? 11 : 10}">${activeRows.length ? "Không có tín hiệu sớm thuộc ngành đã chọn." : "Không có tín hiệu sớm còn hiệu lực."}</td></tr>`;
     return;
   }
   els.leadingSignalsTable.innerHTML = rows.map((row) => {
@@ -6233,6 +6323,7 @@ function renderLeadingSignals() {
     return `
       <tr data-leading-ticker="${escapeHtml(row.ticker || "")}">
         <td><strong>${escapeHtml(row.ticker || "-")}</strong></td>
+        <td>${escapeHtml(row.sector || "Chưa phân ngành")}</td>
         <td><span class="leadingEvent ${direction}">${escapeHtml(leadingEventLabel(row.event || action))}</span></td>
         <td>${escapeHtml(row.timeframe || "-")}</td>
         <td>${formatPrice(row.price)}</td>
@@ -6241,13 +6332,34 @@ function renderLeadingSignals() {
         <td>${escapeHtml(`${row.valid_for_days || 30} ngày`)}</td>
         <td><span class="statusBadge ${status.className}">${escapeHtml(status.label)}</span></td>
         <td>${escapeHtml(lead)}</td>
+        ${isAdmin ? `<td class="leadingSignalActions adminOnly">
+          <button class="deleteButton leadingSignalDelete" type="button" data-leading-delete-id="${escapeHtml(row.id)}" title="${escapeHtml(`Xóa tín hiệu sớm ${row.ticker}`)}" aria-label="${escapeHtml(`Xóa tín hiệu sớm ${row.ticker}`)}">
+            <svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#trash-2"></use></svg>
+          </button>
+        </td>` : ""}
       </tr>
     `;
   }).join("");
   els.leadingSignalsTable.querySelectorAll("[data-leading-ticker]").forEach((row) => {
-    row.addEventListener("click", () => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
       setActiveTab("overview");
       renderChart(row.dataset.leadingTicker);
+    });
+  });
+  els.leadingSignalsTable.querySelectorAll("[data-leading-delete-id]").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (state.user?.role !== "admin" || button.disabled) return;
+      button.disabled = true;
+      const ticker = button.closest("tr").dataset.leadingTicker;
+      try {
+        await deleteSignal(button.dataset.leadingDeleteId, `Xóa tín hiệu sớm ${ticker}? Lịch sử và liên hệ với lệnh mua sẽ được tính lại. Các lệnh RF/EMA không bị xóa. Không thể khôi phục qua giao diện.`);
+      } catch {
+        window.alert(t("deleteFailed"));
+      } finally {
+        if (button.isConnected) button.disabled = false;
+      }
     });
   });
 }
@@ -6343,8 +6455,8 @@ function formatSignalGate(signal) {
   return [gate.sleeve || "-", gate.sector || "-", allocationText].join(" · ");
 }
 
-async function deleteSignal(signalId) {
-  if (!window.confirm(t("deleteConfirm"))) {
+async function deleteSignal(signalId, confirmation = t("deleteConfirm")) {
+  if (!window.confirm(confirmation)) {
     return;
   }
   const response = await fetch(`/api/signals/${encodeURIComponent(signalId)}`, {
@@ -7027,6 +7139,10 @@ els.recentTradeBannerToggle.addEventListener("click", () => {
   renderRecentTradeBanner();
 });
 els.addTickerToWatchlist.addEventListener("click", addSelectedTickerToWatchlist);
+els.leadingSignalSectorFilter?.addEventListener("change", renderLeadingSignals);
+els.leadingSignalSortButtons.forEach((button) => {
+  button.addEventListener("click", () => toggleLeadingSignalSort(button.dataset.leadingSort));
+});
 els.openPositionTickerFilter.addEventListener("input", renderOpenPositions);
 els.openPositionStrategyFilter.addEventListener("change", renderOpenPositions);
 els.openPositionSectorFilter.addEventListener("change", renderOpenPositions);

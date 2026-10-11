@@ -1229,10 +1229,133 @@ main {
 
 .leadingSignalsPanel {
   margin-bottom: 16px;
+  width: 100%;
+  min-width: 0;
 }
 
 .leadingSignalsPanel .tableWrap {
   border-top: 1px solid var(--line-soft);
+  max-height: min(72vh, 820px);
+  width: 100%;
+}
+
+.leadingSignalsPanel table {
+  min-width: 1240px;
+}
+
+.leadingSignalControls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.leadingSectorLabel {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.leadingSectorLabel select {
+  max-width: 280px;
+  min-width: 180px;
+}
+
+.leadingSignalsPanel th {
+  padding: 2px 10px;
+}
+
+.tableSortButton {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  display: inline-flex;
+  font: inherit;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0;
+  text-transform: inherit;
+}
+
+.tableSortButton:hover {
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+}
+
+.tableSortButton:active {
+  transform: none;
+}
+
+th[aria-sort="ascending"] .tableSortButton,
+th[aria-sort="descending"] .tableSortButton {
+  color: var(--accent);
+}
+
+.tableIcon {
+  fill: none;
+  flex: none;
+  height: 16px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  width: 16px;
+}
+
+.leadingSignalsPanel .leadingSignalActions {
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  position: sticky;
+  right: 0;
+  text-align: center;
+  width: 68px;
+  z-index: 1;
+}
+
+.leadingSignalsPanel th.leadingSignalActions {
+  background: var(--table-head);
+  z-index: 3;
+}
+
+.leadingSignalsPanel tr:hover td.leadingSignalActions {
+  background: var(--row-hover);
+}
+
+.leadingSignalDelete {
+  align-items: center;
+  display: inline-flex;
+  height: 44px;
+  justify-content: center;
+  padding: 0;
+  width: 44px;
+}
+
+.leadingSignalDelete:disabled {
+  cursor: wait;
+  opacity: .5;
+}
+
+@media (max-width: 720px) {
+  .leadingSignalControls,
+  .leadingSectorLabel {
+    align-items: stretch;
+    flex-direction: column;
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .leadingSectorLabel select {
+    max-width: none;
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 .leadingEvent {

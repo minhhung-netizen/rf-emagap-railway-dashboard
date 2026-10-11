@@ -19,7 +19,10 @@ def is_leading_signal_action(action: Any) -> bool:
 
 
 def build_leading_signal_feed(
-    signals: list[dict[str, Any]], *, now: datetime | None = None
+    signals: list[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    sector_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     reference_time = _as_utc(now) if now else datetime.now(timezone.utc)
     gated_buys = [
@@ -73,6 +76,7 @@ def build_leading_signal_feed(
             {
                 "id": signal.get("id"),
                 "ticker": signal.get("ticker"),
+                "sector": (sector_map or {}).get(str(signal.get("ticker") or "").upper(), ""),
                 "action": signal.get("action"),
                 "event": payload.get("event") or leading.get("event") or signal.get("action"),
                 "strategy": signal.get("strategy"),

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RF + EMA Portfolio Gate</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/styles.css?v=20260926-admin-tabs-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261011-leading-table-1" />
     <link rel="stylesheet" href="/static/fund-analytics.css?v=2" />
   </head>
   <body>
@@ -234,21 +234,32 @@
               <p class="eyebrow">Inertial RSI</p>
               <h2>Tín hiệu sớm</h2>
             </div>
-            <span id="leadingSignalStatus" class="mutedText" role="status" aria-atomic="true">Chưa có tín hiệu</span>
+            <div class="leadingSignalControls">
+              <span id="leadingSignalStatus" class="mutedText" role="status" aria-atomic="true">Chưa có tín hiệu</span>
+              <label class="leadingSectorLabel">
+                <span>Ngành</span>
+                <select id="leadingSignalSectorFilter" aria-label="Lọc ngành tín hiệu sớm">
+                  <option value="">Tất cả ngành</option>
+                  <option value="__unmapped__">Chưa phân ngành</option>
+                </select>
+              </label>
+            </div>
           </div>
-          <div class="tableWrap compactTable">
+          <div class="tableWrap leadingSignalsTableWrap" tabindex="0" role="region" aria-label="Bảng tín hiệu sớm">
             <table>
               <thead>
                 <tr>
-                  <th>Mã</th>
-                  <th>Sự kiện</th>
-                  <th>Khung</th>
-                  <th>Giá phát hiện</th>
-                  <th>Ngày phát hiện</th>
-                  <th>Ngày pivot</th>
-                  <th>Hiệu lực</th>
-                  <th>Trạng thái</th>
-                  <th>Dẫn trước</th>
+                  <th><button class="tableSortButton" type="button" data-leading-sort="ticker"><span>Mã</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-up-down"></use></svg></button></th>
+                  <th><button class="tableSortButton" type="button" data-leading-sort="sector"><span>Ngành</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-up-down"></use></svg></button></th>
+                  <th><button class="tableSortButton" type="button" data-leading-sort="event"><span>Sự kiện</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-up-down"></use></svg></button></th>
+                  <th><button class="tableSortButton" type="button" data-leading-sort="timeframe"><span>Khung</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-up-down"></use></svg></button></th>
+                  <th><button class="tableSortButton" type="button" data-leading-sort="price"><span>Giá phát hiện</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-up-down"></use></svg></button></th>
+                  <th aria-sort="descending"><button class="tableSortButton" type="button" data-leading-sort="detected_at"><span>Ngày phát hiện</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-down"></use></svg></button></th>
+                  <th><button class="tableSortButton" type="button" data-leading-sort="pivot_time"><span>Ngày pivot</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-up-down"></use></svg></button></th>
+                  <th><button class="tableSortButton" type="button" data-leading-sort="valid_for_days"><span>Hiệu lực</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-up-down"></use></svg></button></th>
+                  <th><button class="tableSortButton" type="button" data-leading-sort="status"><span>Trạng thái</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-up-down"></use></svg></button></th>
+                  <th><button class="tableSortButton" type="button" data-leading-sort="lead_days"><span>Dẫn trước</span><svg class="tableIcon" aria-hidden="true"><use href="/static/vendor/lucide-table.svg#arrow-up-down"></use></svg></button></th>
+                  <th class="leadingSignalActions adminOnly" scope="col">Xóa</th>
                 </tr>
               </thead>
               <tbody id="leadingSignalsTable"></tbody>
@@ -1566,6 +1577,6 @@
     <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
     <script src="/static/trade-ledger.js?v=20260908-1"></script>
     <script src="/static/fund-analytics.js?v=20260908-1"></script>
-    <script src="/static/app.js?v=20261011-leading-lifecycle-1"></script>
+    <script src="/static/app.js?v=20261011-leading-table-1"></script>
   </body>
 </html>

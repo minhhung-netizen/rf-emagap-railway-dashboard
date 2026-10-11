@@ -128,7 +128,10 @@ Phản hồi có `status` như `accepted`, `rejected`, `duplicate`; lý do từ 
 - Tab chỉ hiển thị tín hiệu còn hiệu lực, kể cả khi đã có `buy`, `confirm_buy` hoặc `sell` RF/EMA trong **Vị thế**. Các lệnh này không xóa hay gia hạn tín hiệu sớm.
 - Tín hiệu chỉ rời tab khi đến thời điểm hết hạn hoặc xuất hiện tín hiệu sớm ngược chiều **cùng mã, chỉ báo (`strategy`) và khung thời gian**. Ví dụ `setup_bear` thay cho `setup_bull`; `momentum_bear` cũng kết thúc tín hiệu tăng trong cùng phạm vi. Tín hiệu cùng chiều không kết thúc tín hiệu cũ và mỗi tín hiệu giữ thời hạn riêng. Tín hiệu đã đổi chiều không tự xuất hiện lại nếu chiều cũ quay lại; chỉ tín hiệu mới được hiển thị.
 - `buy` RF/EMA được nhận cùng mã trước khi hết hạn/đổi chiều sẽ được ghi **Đã khớp RF/EMA**, nhưng tín hiệu sớm vẫn còn trên tab. Liên hệ với lệnh mua này được giữ trong lịch sử hiệu suất, kể cả sau khi tín hiệu sớm hết hiệu lực.
-- `/api/leading-signals` vẫn trả lịch sử đầy đủ: `is_active` cho biết còn hiển thị trên tab; `status` là `active`, `matched_rf`, `matched_ema`, `matched`, `expired` hoặc `reversed`. `reversed_at` và `reversed_by_signal_id` chỉ ra lần đổi chiều đầu tiên trong thời hạn; `matched_signal_id`, `matched_at` và `lead_days` giữ liên hệ lịch sử. `summary.active` đếm mọi tín hiệu còn hiệu lực, bao gồm đã khớp; `summary.matched` đếm nhóm đã khớp còn hiệu lực. Bộ đếm trên giao diện tính theo danh sách đang xem, có áp dụng bộ lọc watchlist.
+- Chọn **Ngành** để lọc theo ánh xạ hiện tại trong **Quản trị → Nhóm ngành**, hoặc chọn **Chưa phân ngành**. Cột ngành và bộ lọc vẫn hoạt động với tài khoản chỉ có quyền xem Tổng quan/Tín hiệu sớm; không cần quyền Quản trị hay Vị thế. Bộ lọc ngành kết hợp với watchlist và chỉ áp dụng cho tín hiệu còn hiệu lực.
+- Nút mũi tên ở tiêu đề cột đổi sắp xếp tăng/giảm dần theo mã, ngành, sự kiện, khung, giá, ngày phát hiện/pivot, hiệu lực, trạng thái hoặc số ngày dẫn trước. Mặc định là ngày phát hiện mới nhất; ô thiếu dữ liệu luôn ở cuối. Bộ lọc và thứ tự đã chọn giữ nguyên khi dữ liệu tự làm mới. Bảng sử dụng toàn bộ chiều ngang và vùng xem lớn hơn, có cuộn ngang/dọc cùng cột mã cố định.
+- Quản trị viên có nút thùng rác **Xóa** ghim ở cuối mỗi dòng. Nút yêu cầu xác nhận rồi xóa chính webhook tín hiệu sớm qua `DELETE /api/signals/{id}`; không xóa lệnh mua/bán RF/EMA. Xóa làm tính lại vòng hiệu lực và liên hệ lịch sử; xóa tín hiệu ngược chiều có thể khiến tín hiệu cũ chưa hết hạn xuất hiện lại. Không có khôi phục qua giao diện, nên sao lưu trước khi xóa dữ liệu cần giữ. Tài khoản chỉ xem không có nút xóa và API từ chối thao tác này.
+- `/api/leading-signals` vẫn trả lịch sử đầy đủ: `is_active` cho biết còn hiển thị trên tab; `status` là `active`, `matched_rf`, `matched_ema`, `matched`, `expired` hoặc `reversed`. `sector` là ngành theo ánh xạ hiện tại, chuỗi rỗng nếu chưa có ngành. `reversed_at` và `reversed_by_signal_id` chỉ ra lần đổi chiều đầu tiên trong thời hạn; `matched_signal_id`, `matched_at` và `lead_days` giữ liên hệ lịch sử. `summary.active` đếm mọi tín hiệu còn hiệu lực, bao gồm đã khớp; `summary.matched` đếm nhóm đã khớp còn hiệu lực. Bộ đếm trên giao diện tính theo danh sách đang xem, có áp dụng bộ lọc watchlist và ngành.
 
 Bản Railway này chỉ vận hành cổ phiếu RF/EMA và tín hiệu sớm. API DCA, Kelly, phân bổ thủ công, thống kê backtest nhập tay và phái sinh trả `410 Gone`. Mã frontend cũ còn trong repository không thuộc luồng vận hành hiện hành.
 
@@ -202,7 +205,7 @@ Kiểm tra đầu vào vẫn áp dụng cho mọi webhook: secret, action/sleeve
 | Tab | Công việc chính |
 | --- | --- |
 | **Tổng quan** | Đếm tín hiệu, cảnh báo, biểu đồ giá, timeline theo mã; rủi ro NAV khi có NAV |
-| **Tín hiệu sớm** | Inertial RSI còn hiệu lực, giữ cả tín hiệu đã khớp `buy` RF/EMA; ẩn khi đổi chiều hoặc hết hạn |
+| **Tín hiệu sớm** | Inertial RSI còn hiệu lực, lọc ngành, sắp xếp theo cột, xóa từng tín hiệu (admin); giữ tín hiệu đã khớp `buy` RF/EMA, ẩn khi đổi chiều hoặc hết hạn |
 | **Vị thế** | Vị thế Gate mở/đóng, giá, lợi nhuận ước tính, bộ lọc, đối chiếu rebalance |
 | **Hiệu suất** | NAV/TWR/XIRR nếu có NAV; thống kê tín hiệu riêng với phạm vi toàn Gate hoặc rebalance mới nhất |
 | **RF + EMA Monitor** | Snapshot backtest, exposure trong danh sách, số vị thế theo dõi, danh sách RF Stock MTF hiển thị trước EMA Gap Daily và trần |
@@ -249,6 +252,6 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
-| 11/10/2026 | Tín hiệu sớm giữ nguyên khi RF/EMA mở, xác nhận hoặc đóng vị thế; chỉ ẩn khi hết hạn/đổi chiều cùng mã, chỉ báo và khung. Tách hiệu lực khỏi liên hệ lịch sử với lệnh mua; cập nhật API và bộ đếm tab. |
+| 11/10/2026 | Tín hiệu sớm giữ nguyên khi RF/EMA mở, xác nhận hoặc đóng vị thế; chỉ ẩn khi hết hạn/đổi chiều cùng mã, chỉ báo và khung. Tách hiệu lực khỏi liên hệ lịch sử với lệnh mua; thêm ngành trong API, lọc ngành, sắp xếp theo cột, mở rộng vùng bảng và nút xóa từng tín hiệu cho admin. |
 | 03/10/2026 | Đưa toàn bộ chỉ số và bảng rebalance RF Stock MTF lên trên EMA Gap Daily trong tab RF + EMA Monitor. |
 | 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve, vị thế ngoài danh sách vẫn được theo dõi, quy trình CDP bắt buộc trước khi refresh EMA Gap, checklist theo thứ tự thực thi và publish RF quý giữ EMA gần nhất. |

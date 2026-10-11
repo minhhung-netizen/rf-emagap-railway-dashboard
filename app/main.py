@@ -1066,7 +1066,7 @@ def performance(request: Request, ticker: str | None = None, strategy: str | Non
 
 @app.get("/api/leading-signals")
 def leading_signals() -> dict[str, Any]:
-    return build_leading_signal_feed(store.list_all_signals())
+    return build_leading_signal_feed(store.list_all_signals(), sector_map=store.sector_map())
 
 
 @app.get("/api/backtest-stats")
