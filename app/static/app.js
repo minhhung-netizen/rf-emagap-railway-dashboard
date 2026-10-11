@@ -3308,7 +3308,7 @@ async function refresh() {
   state.signals = filterSignalsForWatchlist(signalsPayload.signals || []);
   renderSignals();
   state.leadingSignals = filterSignalsForWatchlist(leadingPayload.leading_signals || []);
-  renderLeadingSignals(leadingPayload.summary || {});
+  renderLeadingSignals();
   state.portfolioBacktest = portfolioBacktestPayload.backtest || null;
   state.portfolioGate = portfolioGatePayload;
   state.sectors = sectorPayload.sectors || [];
@@ -6210,23 +6210,24 @@ function summarizeSignals(signals) {
   };
 }
 
-function renderLeadingSignals(summary = {}) {
-  const rows = state.leadingSignals || [];
+function renderLeadingSignals() {
+  const rows = (state.leadingSignals || []).filter((row) =>
+    row.is_active ?? (row.status === "active" || String(row.status).startsWith("matched"))
+  );
   if (els.leadingSignalStatus) {
-    const active = Number(summary.active) || rows.filter((row) => row.status === "active").length;
-    const matched = Number(summary.matched) || rows.filter((row) => String(row.status).startsWith("matched")).length;
-    els.leadingSignalStatus.textContent = `${active} đang chờ · ${matched} đã khớp RF/EMA`;
+    const matched = rows.filter((row) => row.matched_signal_id != null).length;
+    els.leadingSignalStatus.textContent = `${rows.length} còn hiệu lực · ${matched} đã khớp RF/EMA`;
   }
   if (!els.leadingSignalsTable) return;
   if (!rows.length) {
-    els.leadingSignalsTable.innerHTML = '<tr><td class="empty" colspan="9">Chưa có tín hiệu sớm từ Inertial RSI.</td></tr>';
+    els.leadingSignalsTable.innerHTML = '<tr><td class="empty" colspan="9">Không có tín hiệu sớm còn hiệu lực.</td></tr>';
     return;
   }
   els.leadingSignalsTable.innerHTML = rows.map((row) => {
     const action = String(row.action || "").toLowerCase();
     const direction = action.endsWith("_bull") ? "bull" : "bear";
     const status = leadingSignalStatus(row);
-    const lead = Number.isFinite(Number(row.lead_days))
+    const lead = row.lead_days != null && Number.isFinite(Number(row.lead_days))
       ? `${Number(row.lead_days).toLocaleString(NUMBER_FORMAT_LOCALE, { maximumFractionDigits: 2 })} ngày`
       : "-";
     return `
@@ -6257,7 +6258,8 @@ function leadingSignalStatus(row) {
   if (status === "matched_ema") return { label: "Đã khớp EMA", className: "matched" };
   if (status.startsWith("matched")) return { label: "Đã khớp", className: "matched" };
   if (status === "expired") return { label: "Hết hạn", className: "neutral" };
-  return { label: "Đang chờ", className: "open" };
+  if (status === "reversed") return { label: "Đã đổi chiều", className: "neutral" };
+  return { label: "Còn hiệu lực", className: "open" };
 }
 
 function leadingEventLabel(event) {

@@ -1,6 +1,6 @@
 # Hướng dẫn RF + EMA Portfolio Gate Dashboard
 
-Cập nhật: 03/10/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
+Cập nhật: 11/10/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
 
 ## 1. Phạm vi và nguồn dữ liệu
 
@@ -123,7 +123,12 @@ TradingView gửi `POST /webhook` với JSON. Giữ tên chiến lược gốc �
 
 Phản hồi có `status` như `accepted`, `rejected`, `duplicate`; lý do từ chối nằm ở **Nhật ký**. Webhook có thể trả HTTP 200 dù tín hiệu bị từ chối, nên cần đọc trường `status`.
 
-**Tín hiệu sớm** Inertial RSI dùng `setup_bull`, `setup_bear`, `momentum_bull`, `momentum_bear`. Chúng nằm ở tab **Tín hiệu sớm**, không mở vị thế và không dùng exposure. Hiệu lực mặc định 30 ngày; `valid_for_days` hợp lệ từ 1 đến 180. Chỉ khi có `buy` RF/EMA được nhận cho cùng mã trong thời gian hiệu lực, tín hiệu sớm mới được đánh dấu khớp. Pine hiện có ở `pinescript/inertial_rsi_leading_dashboard.pine`.
+**Tín hiệu sớm** Inertial RSI dùng `setup_bull`, `setup_bear`, `momentum_bull`, `momentum_bear`. Chúng nằm ở tab **Tín hiệu sớm**, không mở vị thế và không dùng exposure. Hiệu lực mặc định 30 ngày; `valid_for_days` hợp lệ từ 1 đến 180, tính từ thời điểm phát hiện (`time`, hoặc thời điểm nhận nếu thiếu `time`), không phải ngày pivot. Pine hiện có ở `pinescript/inertial_rsi_leading_dashboard.pine`.
+
+- Tab chỉ hiển thị tín hiệu còn hiệu lực, kể cả khi đã có `buy`, `confirm_buy` hoặc `sell` RF/EMA trong **Vị thế**. Các lệnh này không xóa hay gia hạn tín hiệu sớm.
+- Tín hiệu chỉ rời tab khi đến thời điểm hết hạn hoặc xuất hiện tín hiệu sớm ngược chiều **cùng mã, chỉ báo (`strategy`) và khung thời gian**. Ví dụ `setup_bear` thay cho `setup_bull`; `momentum_bear` cũng kết thúc tín hiệu tăng trong cùng phạm vi. Tín hiệu cùng chiều không kết thúc tín hiệu cũ và mỗi tín hiệu giữ thời hạn riêng. Tín hiệu đã đổi chiều không tự xuất hiện lại nếu chiều cũ quay lại; chỉ tín hiệu mới được hiển thị.
+- `buy` RF/EMA được nhận cùng mã trước khi hết hạn/đổi chiều sẽ được ghi **Đã khớp RF/EMA**, nhưng tín hiệu sớm vẫn còn trên tab. Liên hệ với lệnh mua này được giữ trong lịch sử hiệu suất, kể cả sau khi tín hiệu sớm hết hiệu lực.
+- `/api/leading-signals` vẫn trả lịch sử đầy đủ: `is_active` cho biết còn hiển thị trên tab; `status` là `active`, `matched_rf`, `matched_ema`, `matched`, `expired` hoặc `reversed`. `reversed_at` và `reversed_by_signal_id` chỉ ra lần đổi chiều đầu tiên trong thời hạn; `matched_signal_id`, `matched_at` và `lead_days` giữ liên hệ lịch sử. `summary.active` đếm mọi tín hiệu còn hiệu lực, bao gồm đã khớp; `summary.matched` đếm nhóm đã khớp còn hiệu lực. Bộ đếm trên giao diện tính theo danh sách đang xem, có áp dụng bộ lọc watchlist.
 
 Bản Railway này chỉ vận hành cổ phiếu RF/EMA và tín hiệu sớm. API DCA, Kelly, phân bổ thủ công, thống kê backtest nhập tay và phái sinh trả `410 Gone`. Mã frontend cũ còn trong repository không thuộc luồng vận hành hiện hành.
 
@@ -197,7 +202,7 @@ Kiểm tra đầu vào vẫn áp dụng cho mọi webhook: secret, action/sleeve
 | Tab | Công việc chính |
 | --- | --- |
 | **Tổng quan** | Đếm tín hiệu, cảnh báo, biểu đồ giá, timeline theo mã; rủi ro NAV khi có NAV |
-| **Tín hiệu sớm** | Inertial RSI, thời gian hiệu lực, trạng thái khớp `buy` RF/EMA |
+| **Tín hiệu sớm** | Inertial RSI còn hiệu lực, giữ cả tín hiệu đã khớp `buy` RF/EMA; ẩn khi đổi chiều hoặc hết hạn |
 | **Vị thế** | Vị thế Gate mở/đóng, giá, lợi nhuận ước tính, bộ lọc, đối chiếu rebalance |
 | **Hiệu suất** | NAV/TWR/XIRR nếu có NAV; thống kê tín hiệu riêng với phạm vi toàn Gate hoặc rebalance mới nhất |
 | **RF + EMA Monitor** | Snapshot backtest, exposure trong danh sách, số vị thế theo dõi, danh sách RF Stock MTF hiển thị trước EMA Gap Daily và trần |
@@ -244,5 +249,6 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
+| 11/10/2026 | Tín hiệu sớm giữ nguyên khi RF/EMA mở, xác nhận hoặc đóng vị thế; chỉ ẩn khi hết hạn/đổi chiều cùng mã, chỉ báo và khung. Tách hiệu lực khỏi liên hệ lịch sử với lệnh mua; cập nhật API và bộ đếm tab. |
 | 03/10/2026 | Đưa toàn bộ chỉ số và bảng rebalance RF Stock MTF lên trên EMA Gap Daily trong tab RF + EMA Monitor. |
 | 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve, vị thế ngoài danh sách vẫn được theo dõi, quy trình CDP bắt buộc trước khi refresh EMA Gap, checklist theo thứ tự thực thi và publish RF quý giữ EMA gần nhất. |

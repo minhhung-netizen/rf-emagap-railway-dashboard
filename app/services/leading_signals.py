@@ -27,19 +27,44 @@ def build_leading_signal_feed(
         for signal in signals
         if str(signal.get("action") or "").lower() == "buy"
         and _portfolio_gate(signal) is not None
+        and (signal_at := _signal_datetime(signal)) is not None
+        and signal_at <= reference_time
     ]
-    rows = []
+    leading_events = []
     for signal in signals:
-        if not is_leading_signal_action(signal.get("action")):
-            continue
-        detected_at = _signal_datetime(signal)
-        if detected_at is None:
-            continue
+        if is_leading_signal_action(signal.get("action")):
+            detected_at = _signal_datetime(signal)
+            if detected_at is not None and detected_at <= reference_time:
+                leading_events.append((detected_at, signal))
+    leading_events.sort(
+        key=lambda item: (
+            item[0],
+            _parse_datetime(item[1].get("received_at")) or item[0],
+            item[1].get("id") or 0,
+        ),
+        reverse=True,
+    )
+    next_by_direction: dict[tuple[str, ...], tuple[datetime, dict[str, Any]]] = {}
+    rows = []
+    # Walk backwards so each event sees the first subsequent opposite signal.
+    for detected_at, signal in leading_events:
+        direction = "bull" if str(signal.get("action") or "").lower().endswith("_bull") else "bear"
+        scope = (
+            str(signal.get("ticker") or "").strip().upper(),
+            str(signal.get("strategy") or "Inertial RSI").strip().casefold(),
+            str(signal.get("timeframe") or "").strip().upper(),
+        )
+        reversal = next_by_direction.get((*scope, "bear" if direction == "bull" else "bull"))
+        next_by_direction[(*scope, direction)] = (detected_at, signal)
         expires_at = detected_at + timedelta(days=_valid_for_days(signal))
-        matched_buy = _first_matching_buy(signal, gated_buys, detected_at, expires_at)
+        reversed_at = reversal[0] if reversal and reversal[0] < expires_at else None
+        matched_buy = _first_matching_buy(
+            signal, gated_buys, detected_at, expires_at, reversed_at=reversed_at
+        )
         gate = _portfolio_gate(matched_buy) if matched_buy else None
-        status = "expired" if reference_time > expires_at else "active"
-        if matched_buy:
+        is_active = reference_time < expires_at and reversed_at is None
+        status = "reversed" if reversed_at else "active" if is_active else "expired"
+        if is_active and matched_buy:
             sleeve = str((gate or {}).get("sleeve") or "").strip().lower()
             status = f"matched_{sleeve}" if sleeve in {"rf", "ema"} else "matched"
         payload = signal.get("payload") or {}
@@ -62,6 +87,9 @@ def build_leading_signal_feed(
                 "valid_for_days": _valid_for_days(signal),
                 "expires_at": expires_at.isoformat(),
                 "status": status,
+                "is_active": is_active,
+                "reversed_at": reversed_at.isoformat() if reversed_at else None,
+                "reversed_by_signal_id": reversal[1].get("id") if reversed_at else None,
                 "matched_signal_id": matched_buy.get("id") if matched_buy else None,
                 "matched_strategy": matched_buy.get("strategy") if matched_buy else None,
                 "matched_at": _signal_time(matched_buy) if matched_buy else None,
@@ -70,14 +98,14 @@ def build_leading_signal_feed(
                 else None,
             }
         )
-    rows.sort(key=lambda row: str(row.get("detected_at") or ""), reverse=True)
     return {
         "leading_signals": rows,
         "summary": {
             "total": len(rows),
-            "active": sum(row["status"] == "active" for row in rows),
+            "active": sum(row["is_active"] for row in rows),
             "matched": sum(str(row["status"]).startswith("matched") for row in rows),
             "expired": sum(row["status"] == "expired" for row in rows),
+            "reversed": sum(row["status"] == "reversed" for row in rows),
         },
     }
 
@@ -120,6 +148,8 @@ def _first_matching_buy(
     buys: list[dict[str, Any]],
     detected_at: datetime,
     expires_at: datetime,
+    *,
+    reversed_at: datetime | None = None,
 ) -> dict[str, Any] | None:
     ticker = str(leading_signal.get("ticker") or "").upper()
     candidates = []
@@ -127,7 +157,11 @@ def _first_matching_buy(
         if str(signal.get("ticker") or "").upper() != ticker:
             continue
         signal_at = _signal_datetime(signal)
-        if signal_at is not None and detected_at <= signal_at <= expires_at:
+        if (
+            signal_at is not None
+            and detected_at <= signal_at < expires_at
+            and (reversed_at is None or signal_at < reversed_at)
+        ):
             candidates.append((signal_at, signal))
     return min(candidates, key=lambda item: item[0])[1] if candidates else None
 
