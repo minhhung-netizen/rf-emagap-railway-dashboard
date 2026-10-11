@@ -27,6 +27,7 @@ const els = {
   signalCards: document.querySelector("#signalCards"),
   leadingSignalStatus: document.querySelector("#leadingSignalStatus"),
   leadingSignalSectorFilter: document.querySelector("#leadingSignalSectorFilter"),
+  leadingSignalEventFilter: document.querySelector("#leadingSignalEventFilter"),
   leadingSignalSortButtons: document.querySelectorAll("[data-leading-sort]"),
   leadingSignalsTable: document.querySelector("#leadingSignalsTable"),
   openPositionsTable: document.querySelector("#openPositionsTable"),
@@ -6233,8 +6234,23 @@ function updateLeadingSignalSectorFilter(rows) {
   els.leadingSignalSectorFilter.value = currentValue;
 }
 
+function leadingSignalEventKey(row) {
+  return String(row.event || row.action || "").trim().toLowerCase();
+}
+
+function updateLeadingSignalEventFilter(rows) {
+  if (!els.leadingSignalEventFilter) return;
+  const currentValue = els.leadingSignalEventFilter.value;
+  const events = [...new Set(rows.map(leadingSignalEventKey).filter(Boolean))];
+  if (currentValue && !events.includes(currentValue)) events.push(currentValue);
+  events.sort((left, right) => leadingEventLabel(left).localeCompare(leadingEventLabel(right), "vi"));
+  els.leadingSignalEventFilter.replaceChildren(new Option("Tất cả tín hiệu", ""));
+  events.forEach((event) => els.leadingSignalEventFilter.append(new Option(leadingEventLabel(event), event)));
+  els.leadingSignalEventFilter.value = currentValue;
+}
+
 function leadingSignalSortValue(row, key) {
-  if (key === "event") return leadingEventLabel(row.event || row.action);
+  if (key === "event") return leadingEventLabel(leadingSignalEventKey(row));
   if (key === "status") return leadingSignalStatus(row).label;
   const value = row[key];
   if (value == null || value === "") return null;
@@ -6297,20 +6313,23 @@ function toggleLeadingSignalSort(key) {
 function renderLeadingSignals() {
   const activeRows = activeLeadingSignals();
   updateLeadingSignalSectorFilter(activeRows);
+  updateLeadingSignalEventFilter(activeRows);
   updateLeadingSignalSortHeaders();
   const sector = els.leadingSignalSectorFilter?.value || "";
+  const event = els.leadingSignalEventFilter?.value || "";
   const rows = sortLeadingSignals(activeRows.filter((row) => {
     const rowSector = String(row.sector || "").trim();
-    return !sector || (sector === "__unmapped__" ? !rowSector : rowSector === sector);
+    const matchesSector = !sector || (sector === "__unmapped__" ? !rowSector : rowSector === sector);
+    return matchesSector && (!event || leadingSignalEventKey(row) === event);
   }));
   const isAdmin = state.user?.role === "admin";
   if (els.leadingSignalStatus) {
     const matched = rows.filter((row) => row.matched_signal_id != null).length;
-    els.leadingSignalStatus.textContent = `${rows.length}${sector ? `/${activeRows.length}` : ""} còn hiệu lực · ${matched} đã khớp RF/EMA`;
+    els.leadingSignalStatus.textContent = `${rows.length}${sector || event ? `/${activeRows.length}` : ""} còn hiệu lực · ${matched} đã khớp RF/EMA`;
   }
   if (!els.leadingSignalsTable) return;
   if (!rows.length) {
-    els.leadingSignalsTable.innerHTML = `<tr><td class="empty" colspan="${isAdmin ? 11 : 10}">${activeRows.length ? "Không có tín hiệu sớm thuộc ngành đã chọn." : "Không có tín hiệu sớm còn hiệu lực."}</td></tr>`;
+    els.leadingSignalsTable.innerHTML = `<tr><td class="empty" colspan="${isAdmin ? 11 : 10}">${activeRows.length ? "Không có tín hiệu sớm phù hợp bộ lọc đã chọn." : "Không có tín hiệu sớm còn hiệu lực."}</td></tr>`;
     return;
   }
   els.leadingSignalsTable.innerHTML = rows.map((row) => {
@@ -6324,7 +6343,7 @@ function renderLeadingSignals() {
       <tr data-leading-ticker="${escapeHtml(row.ticker || "")}">
         <td><strong>${escapeHtml(row.ticker || "-")}</strong></td>
         <td>${escapeHtml(row.sector || "Chưa phân ngành")}</td>
-        <td><span class="leadingEvent ${direction}">${escapeHtml(leadingEventLabel(row.event || action))}</span></td>
+        <td><span class="leadingEvent ${direction}">${escapeHtml(leadingEventLabel(leadingSignalEventKey(row)))}</span></td>
         <td>${escapeHtml(row.timeframe || "-")}</td>
         <td>${formatPrice(row.price)}</td>
         <td>${escapeHtml(formatDateOnly(row.detected_at))}</td>
@@ -7140,6 +7159,7 @@ els.recentTradeBannerToggle.addEventListener("click", () => {
 });
 els.addTickerToWatchlist.addEventListener("click", addSelectedTickerToWatchlist);
 els.leadingSignalSectorFilter?.addEventListener("change", renderLeadingSignals);
+els.leadingSignalEventFilter?.addEventListener("change", renderLeadingSignals);
 els.leadingSignalSortButtons.forEach((button) => {
   button.addEventListener("click", () => toggleLeadingSignalSort(button.dataset.leadingSort));
 });

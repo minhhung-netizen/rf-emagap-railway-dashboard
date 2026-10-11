@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>RF + EMA Portfolio Gate</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/static/styles.css?v=20261011-leading-table-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261011-leading-event-filter-1" />
     <link rel="stylesheet" href="/static/fund-analytics.css?v=2" />
   </head>
   <body>
@@ -236,11 +236,17 @@
             </div>
             <div class="leadingSignalControls">
               <span id="leadingSignalStatus" class="mutedText" role="status" aria-atomic="true">Chưa có tín hiệu</span>
-              <label class="leadingSectorLabel">
+              <label class="leadingFilterLabel">
                 <span>Ngành</span>
                 <select id="leadingSignalSectorFilter" aria-label="Lọc ngành tín hiệu sớm">
                   <option value="">Tất cả ngành</option>
                   <option value="__unmapped__">Chưa phân ngành</option>
+                </select>
+              </label>
+              <label class="leadingFilterLabel">
+                <span>Tín hiệu</span>
+                <select id="leadingSignalEventFilter" aria-label="Lọc loại tín hiệu sớm">
+                  <option value="">Tất cả tín hiệu</option>
                 </select>
               </label>
             </div>
@@ -1577,6 +1583,6 @@
     <script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
     <script src="/static/trade-ledger.js?v=20260908-1"></script>
     <script src="/static/fund-analytics.js?v=20260908-1"></script>
-    <script src="/static/app.js?v=20261011-leading-table-1"></script>
+    <script src="/static/app.js?v=20261011-leading-event-filter-1"></script>
   </body>
 </html>

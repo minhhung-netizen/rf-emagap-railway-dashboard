@@ -1252,7 +1252,7 @@ main {
   min-width: 0;
 }
 
-.leadingSectorLabel {
+.leadingFilterLabel {
   align-items: center;
   display: flex;
   gap: 8px;
@@ -1260,7 +1260,7 @@ main {
   font-size: 12px;
 }
 
-.leadingSectorLabel select {
+.leadingFilterLabel select {
   max-width: 280px;
   min-width: 180px;
 }
@@ -1344,14 +1344,14 @@ th[aria-sort="descending"] .tableSortButton {
 
 @media (max-width: 720px) {
   .leadingSignalControls,
-  .leadingSectorLabel {
+  .leadingFilterLabel {
     align-items: stretch;
     flex-direction: column;
     justify-content: flex-start;
     width: 100%;
   }
 
-  .leadingSectorLabel select {
+  .leadingFilterLabel select {
     max-width: none;
     min-width: 0;
     width: 100%;

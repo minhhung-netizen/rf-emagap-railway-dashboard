@@ -19,8 +19,15 @@ const select = {
   replaceChildren(...options) { this.options = options; },
   append(option) { this.options.push(option); },
 };
+const eventSelect = {
+  value: "",
+  options: [],
+  replaceChildren(...options) { this.options = options; },
+  append(option) { this.options.push(option); },
+};
 const els = {
   leadingSignalSectorFilter: select,
+  leadingSignalEventFilter: eventSelect,
   leadingSignalSortButtons: [],
   leadingSignalStatus: { textContent: "" },
   leadingSignalsTable: { innerHTML: "", querySelectorAll: () => [] },
@@ -66,11 +73,11 @@ state.leadingSignalSort.direction = "desc";
 assert.deepEqual(ids(context.sortLeadingSignals(pivots)), [2, 1, 4, 3]);
 
 state.leadingSignals = [
-  event(1, { ticker: "SSI", lead_days: 0, status: "matched_rf", matched_signal_id: 10 }),
-  event(2, { ticker: "FPT", sector: "Technology" }),
-  event(3, { ticker: "UNKNOWN", sector: "" }),
-  event(4, { ticker: "EXPIRED", is_active: false, status: "expired" }),
-  event(5, { ticker: "REVERSED", is_active: false, status: "matched_rf" }),
+  event(1, { ticker: "SSI", event: " BULL_DIVERGENCE ", lead_days: 0, status: "matched_rf", matched_signal_id: 10 }),
+  event(2, { ticker: "FPT", sector: "Technology", event: "bear_divergence", action: "setup_bear" }),
+  event(3, { ticker: "UNKNOWN", sector: "", event: null, action: "momentum_bull" }),
+  event(4, { ticker: "EXPIRED", event: "rsi_cross_oversold", is_active: false, status: "expired" }),
+  event(5, { ticker: "REVERSED", event: "rsi_cross_overbought", is_active: false, status: "matched_rf" }),
 ];
 assert.deepEqual(ids(context.activeLeadingSignals()), [1, 2, 3]);
 context.toggleLeadingSignalSort("ticker");
@@ -88,6 +95,14 @@ assert.match(els.leadingSignalsTable.innerHTML, /data-leading-delete-id="1"/);
 assert.match(els.leadingSignalsTable.innerHTML, /0 ngày/);
 assert.doesNotMatch(els.leadingSignalsTable.innerHTML, /FPT|EXPIRED|REVERSED/);
 assert(select.options.some((option) => option.value === "Technology"));
+assert.deepEqual(eventSelect.options.map((option) => [option.value, option.text]), [
+  ["", "Tất cả tín hiệu"],
+  ["momentum_bull", "Động lượng tăng"],
+  ["bear_divergence", "Phân kỳ giảm"],
+  ["bull_divergence", "Phân kỳ tăng"],
+]);
+context.updateLeadingSignalEventFilter([...context.activeLeadingSignals(), state.leadingSignals[0]]);
+assert.equal(eventSelect.options.filter((option) => option.value === "bull_divergence").length, 1);
 
 select.value = "__unmapped__";
 context.renderLeadingSignals();
@@ -98,15 +113,52 @@ select.value = "Empty industry";
 context.renderLeadingSignals();
 assert.equal(select.value, "Empty industry");
 assert(select.options.some((option) => option.value === "Empty industry"));
-assert.match(els.leadingSignalsTable.innerHTML, /Không có tín hiệu sớm thuộc ngành đã chọn/);
+assert.match(els.leadingSignalsTable.innerHTML, /Không có tín hiệu sớm phù hợp bộ lọc đã chọn/);
+
+select.value = "";
+eventSelect.value = "bull_divergence";
+context.renderLeadingSignals();
+assert.equal(els.leadingSignalStatus.textContent, "1/3 còn hiệu lực · 1 đã khớp RF/EMA");
+assert.match(els.leadingSignalsTable.innerHTML, /SSI/);
+assert.doesNotMatch(els.leadingSignalsTable.innerHTML, /FPT|UNKNOWN|EXPIRED|REVERSED/);
+context.toggleLeadingSignalSort("ticker");
+assert.equal(eventSelect.value, "bull_divergence");
+assert.match(els.leadingSignalsTable.innerHTML, /SSI/);
+
+select.value = "Technology";
+context.renderLeadingSignals();
+assert.equal(els.leadingSignalStatus.textContent, "0/3 còn hiệu lực · 0 đã khớp RF/EMA");
+assert.match(els.leadingSignalsTable.innerHTML, /Không có tín hiệu sớm phù hợp bộ lọc đã chọn/);
+eventSelect.value = "bear_divergence";
+context.renderLeadingSignals();
+assert.equal(els.leadingSignalStatus.textContent, "1/3 còn hiệu lực · 0 đã khớp RF/EMA");
+assert.match(els.leadingSignalsTable.innerHTML, /FPT/);
+assert.doesNotMatch(els.leadingSignalsTable.innerHTML, /SSI|UNKNOWN/);
+
+state.leadingSignals[1].is_active = false;
+context.renderLeadingSignals();
+assert.equal(eventSelect.value, "bear_divergence");
+assert(eventSelect.options.some((option) => option.value === "bear_divergence"));
+assert.equal(els.leadingSignalStatus.textContent, "0/2 còn hiệu lực · 0 đã khớp RF/EMA");
+assert.match(els.leadingSignalsTable.innerHTML, /Không có tín hiệu sớm phù hợp bộ lọc đã chọn/);
+state.leadingSignals[1].is_active = true;
+
+select.value = "__unmapped__";
+eventSelect.value = "momentum_bull";
+context.renderLeadingSignals();
+assert.match(els.leadingSignalsTable.innerHTML, /UNKNOWN/);
+assert.match(els.leadingSignalsTable.innerHTML, /Động lượng tăng/);
+assert.doesNotMatch(els.leadingSignalsTable.innerHTML, /SSI|FPT/);
 
 state.user.role = "user";
 select.value = "";
+eventSelect.value = "";
 context.renderLeadingSignals();
+assert.equal(els.leadingSignalStatus.textContent, "3 còn hiệu lực · 1 đã khớp RF/EMA");
 assert.doesNotMatch(els.leadingSignalsTable.innerHTML, /data-leading-delete-id/);
 state.leadingSignals = [];
 context.renderLeadingSignals();
 assert.match(els.leadingSignalsTable.innerHTML, /colspan="10"/);
 assert.match(els.leadingSignalsTable.innerHTML, /Không có tín hiệu sớm còn hiệu lực/);
 
-console.log("Leading signal table checks passed: sorting, filtering, expiry, empty states, and admin-only deletion.");
+console.log("Leading signal table checks passed: sorting, combined sector/event filters, refresh, expiry, empty states, and admin-only deletion.");
