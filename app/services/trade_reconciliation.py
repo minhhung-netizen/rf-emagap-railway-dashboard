@@ -1,8 +1,8 @@
-"""Daily buy surplus from broker reports, independent of the transaction ledger.
+"""Trading inventory above a separately held base, independent of the ledger.
 
-Only positive daily buy-minus-sell quantities are carried forward. Excess sales
-never consume earlier buy surplus. Values and average costs are in VND; fees
-are not present in the source report and are not inferred.
+Daily buy-minus-sell quantities add to or consume prior trading inventory.
+Sales keep its weighted average cost and cannot reduce the fixed, already
+owned base. Values and average costs are in VND; fees are not inferred.
 """
 from __future__ import annotations
 
@@ -295,7 +295,7 @@ def import_report(store, parsed: dict, username, replace_existing=False) -> dict
             if replaced:
                 conn.execute("UPDATE reconciliation_imports SET account_label=?,filename=?,digest=?,rows_json=?,created_by=?,created_at=? WHERE id=?",
                              (*values, existing["id"]))
-                tickers = [r["ticker"] for r in canonical if r["buy_quantity"] > r["sell_quantity"]]
+                tickers = [r["ticker"] for r in canonical]
                 if tickers:
                     placeholders = ",".join("?" for _ in tickers)
                     conn.execute(f"DELETE FROM reconciliation_notes WHERE scope=? AND trade_date=? AND ticker NOT IN ({placeholders})", (scope, day, *tickers))
@@ -313,6 +313,7 @@ def build_report(store, scope=None) -> dict:
         imports = [dict(r) for r in conn.execute("SELECT * FROM reconciliation_imports ORDER BY trade_date,id")]
         notes = {(r["scope"], r["trade_date"], r["ticker"]): r["note"]
                  for r in conn.execute("SELECT * FROM reconciliation_notes")}
+        all_bases = [dict(r) for r in conn.execute("SELECT * FROM reconciliation_bases ORDER BY scope,ticker")]
     scope_map = {}
     for item in imports:
         s = scope_map.setdefault(item["scope"], dict(scope=item["scope"], account_label=item["account_label"],
@@ -332,47 +333,75 @@ def build_report(store, scope=None) -> dict:
             item["account_label"] += " · #" + item["scope"][-6:]
     selected_scope = scope or (scopes[0]["scope"] if scopes else None)
     selected = [i for i in imports if i["scope"] == selected_scope]
+    bases = [b for b in all_bases if b["scope"] == selected_scope]
+    base_quantities = {b["ticker"]: b["base_quantity"] for b in bases}
     holdings = {}
+    selected_label = scope_map[selected_scope]["account_label"] if selected_scope else ""
+    for base in bases:
+        key = (selected_scope, base["ticker"])
+        holdings[key] = dict(scope=selected_scope, account_label=selected_label, ticker=base["ticker"],
+                             quantity=0, cost=Decimal(0), first_trade_date=None, last_trade_date=None)
     rows = []
     ignored = 0
+    ignored_sales = 0
     with localcontext() as context:
         context.prec = 50
         for item in selected:
             for raw in json.loads(item["rows_json"]):
                 row = _public_row(raw)
                 surplus = row["residual_buy_quantity"]
-                if not surplus:
-                    ignored += 1
-                    continue
                 key = (item["scope"], raw["ticker"])
                 position = holdings.setdefault(key, dict(scope=key[0], account_label=item["account_label"], ticker=key[1],
                                                          quantity=0, cost=Decimal(0), first_trade_date=item["trade_date"],
                                                          last_trade_date=item["trade_date"]))
                 opening = position["quantity"]
                 opening_average = position["cost"] / opening if opening else None
-                added_cost = Decimal(raw["buy_amount"]) * surplus / raw["buy_quantity"]
-                position["quantity"] += surplus
-                position["cost"] += added_cost
+                sold = min(max(-row["net_quantity"], 0), opening)
+                ignored_sell = max(-row["net_quantity"] - sold, 0)
+                ignored_sales += ignored_sell
+                if not surplus and not sold:
+                    ignored += 1
+                added_cost = Decimal(0)
+                if surplus:
+                    added_cost = Decimal(raw["buy_amount"]) * surplus / raw["buy_quantity"]
+                    position["quantity"] += surplus
+                    position["cost"] += added_cost
+                elif sold:
+                    position["quantity"] -= sold
+                    position["cost"] = opening_average * position["quantity"] if position["quantity"] else Decimal(0)
+                if position["first_trade_date"] is None:
+                    position["first_trade_date"] = item["trade_date"]
                 position["last_trade_date"] = item["trade_date"]
-                closing_average = position["cost"] / position["quantity"]
+                closing_average = position["cost"] / position["quantity"] if position["quantity"] else None
+                base_quantity = base_quantities.get(key[1], 0)
+                status = "buy_remaining" if position["quantity"] else "base_only" if base_quantity else "closed"
                 rows.append({**row, "scope": key[0], "account_label": item["account_label"], "trade_date": item["trade_date"],
                              "opening_quantity": opening, "opening_average_cost": float(opening_average) if opening_average is not None else None,
-                             "closing_quantity": position["quantity"], "closing_average_cost": float(closing_average),
-                             "residual_buy_cost": float(added_cost), "status": "buy_remaining",
+                             "closing_quantity": position["quantity"], "closing_average_cost": float(closing_average) if closing_average is not None else None,
+                             "residual_buy_cost": float(added_cost), "tracked_sell_quantity": sold,
+                             "ignored_sell_quantity": ignored_sell, "base_quantity": base_quantity,
+                             "opening_total_quantity": base_quantity + opening,
+                             "closing_total_quantity": base_quantity + position["quantity"], "status": status,
                              "note": notes.get((key[0], item["trade_date"], key[1]), "")})
         positions = [{k: v for k, v in p.items() if k != "cost"} |
-                     dict(average_cost=float(p["cost"] / p["quantity"]), total_cost=float(p["cost"]))
+                     dict(average_cost=float(p["cost"] / p["quantity"]) if p["quantity"] else None,
+                          total_cost=float(p["cost"]), base_quantity=base_quantities.get(p["ticker"], 0),
+                          total_quantity=p["quantity"] + base_quantities.get(p["ticker"], 0),
+                          status="buy_remaining" if p["quantity"] else "base_only" if base_quantities.get(p["ticker"], 0) else "closed")
                      for p in holdings.values()]
         total_cost = float(sum((p["cost"] for p in holdings.values()), Decimal(0)))
     metadata = [{k: v for k, v in i.items() if k not in {"rows_json", "digest"}} |
                 dict(rows_count=len(json.loads(i["rows_json"]))) for i in selected]
-    return dict(scopes=scopes, selected_scope=selected_scope,
+    return dict(scopes=scopes, selected_scope=selected_scope, bases=bases,
                 imports=list(reversed(metadata)), rows=sorted(rows, key=lambda r: (r["trade_date"], r["ticker"], r["scope"]), reverse=True),
                 positions=sorted(positions, key=lambda p: (p["ticker"], p["scope"])),
                 totals=dict(imports_count=len(selected), daily_rows_count=len(rows), ignored_rows_count=ignored,
-                            outstanding_tickers=len({p["ticker"] for p in positions}),
-                            outstanding_quantity=sum(p["quantity"] for p in positions), total_cost=total_cost),
-                currency="VND", method="daily_buy_surplus_weighted_average")
+                            outstanding_tickers=len({p["ticker"] for p in positions if p["quantity"] > 0}),
+                            outstanding_quantity=sum(p["quantity"] for p in positions), total_cost=total_cost,
+                            ignored_sell_quantity=ignored_sales,
+                            base_quantity=sum(p["base_quantity"] for p in positions),
+                            total_quantity=sum(p["total_quantity"] for p in positions)),
+                currency="VND", method="daily_net_inventory_with_base")
 
 
 def save_note(store, scope, trade_date, ticker, note, username) -> dict:
@@ -385,9 +414,31 @@ def save_note(store, scope, trade_date, ticker, note, username) -> dict:
         conn.execute("BEGIN IMMEDIATE")
         report = conn.execute("SELECT rows_json FROM reconciliation_imports WHERE scope=? AND trade_date=?", (scope, trade_date)).fetchone()
         target = next((r for r in json.loads(report["rows_json"]) if r["ticker"] == ticker), None) if report else None
-        if not target or target["buy_quantity"] <= target["sell_quantity"]:
-            raise ValueError("Chỉ ghi chú mã có tồn mua trong báo cáo ngày đã nhập")
+        if not target:
+            raise ValueError("Chỉ ghi chú mã có giao dịch trong báo cáo ngày đã nhập")
         conn.execute("INSERT INTO reconciliation_notes(scope,trade_date,ticker,note,updated_by,updated_at) VALUES(?,?,?,?,?,?) "
                      "ON CONFLICT(scope,trade_date,ticker) DO UPDATE SET note=excluded.note,updated_by=excluded.updated_by,updated_at=excluded.updated_at",
                      (scope, trade_date, ticker, note, username, updated))
     return dict(scope=scope, trade_date=trade_date, ticker=ticker, note=note, updated_by=username, updated_at=updated)
+
+
+def save_base(store, scope, ticker, quantity, username) -> dict:
+    """Set already owned shares held separately from all imported trading fills."""
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Cần chọn tài khoản đối chiếu đã có báo cáo")
+    if not isinstance(ticker, str):
+        raise ValueError("Mã cổ phiếu cơ sở không hợp lệ")
+    ticker = ticker.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9._-]{0,19}", ticker):
+        raise ValueError("Mã cổ phiếu cơ sở không hợp lệ")
+    if isinstance(quantity, bool) or not isinstance(quantity, int) or not 0 <= quantity <= MAX_QUANTITY:
+        raise ValueError("Số cổ phiếu cơ sở phải là số nguyên không âm và không vượt quá 1.000.000.000.000 CP")
+    updated = utc_now_iso()
+    with store.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM reconciliation_imports WHERE scope=? LIMIT 1", (scope,)).fetchone() is None:
+            raise ValueError("Không tìm thấy tài khoản đối chiếu đã có báo cáo")
+        conn.execute("INSERT INTO reconciliation_bases(scope,ticker,base_quantity,updated_by,updated_at) VALUES(?,?,?,?,?) "
+                     "ON CONFLICT(scope,ticker) DO UPDATE SET base_quantity=excluded.base_quantity,updated_by=excluded.updated_by,updated_at=excluded.updated_at",
+                     (scope, ticker, quantity, username, updated))
+    return dict(scope=scope, ticker=ticker, base_quantity=quantity, updated_by=username, updated_at=updated)

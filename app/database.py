@@ -30,6 +30,14 @@ CREATE TABLE IF NOT EXISTS reconciliation_notes (
     updated_at TEXT NOT NULL,
     PRIMARY KEY(scope, trade_date, ticker)
 );
+CREATE TABLE IF NOT EXISTS reconciliation_bases (
+    scope TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    base_quantity INTEGER NOT NULL CHECK(base_quantity >= 0),
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(scope, ticker)
+);
 CREATE TABLE IF NOT EXISTS ledger_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     reference TEXT NOT NULL UNIQUE,

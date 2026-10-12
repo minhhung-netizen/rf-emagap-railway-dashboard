@@ -1312,6 +1312,14 @@ class ReconciliationNote(BaseModel):
     note: str = Field(max_length=2000)
 
 
+class ReconciliationBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: str = Field(min_length=1, max_length=64)
+    ticker: str = Field(min_length=1, max_length=20)
+    base_quantity: int = Field(ge=0, le=10**12, strict=True)
+
+
 def require_reconciliation_access(request: Request) -> None:
     if strategy_restricted(request.state.user):
         raise HTTPException(
@@ -1378,6 +1386,14 @@ def save_reconciliation_note(payload: ReconciliationNote, request: Request):
         trade_reconciliation.save_note, store, payload.scope,
         payload.trade_date.isoformat(), payload.ticker, payload.note,
         request.state.user["username"],
+    )
+
+
+@app.put("/api/trade-reconciliation/bases")
+def save_reconciliation_base(payload: ReconciliationBase, request: Request):
+    return reconciliation_action(
+        trade_reconciliation.save_base, store, payload.scope,
+        payload.ticker, payload.base_quantity, request.state.user["username"],
     )
 
 

@@ -16,7 +16,7 @@ from app.services.auth import SESSION_COOKIE, hash_password, new_session
 BASE = "/api/trade-reconciliation"
 
 
-def workbook(day="05/01/2026", *, account="SYNTH0001", buys=100, sells=50, price=10000):
+def workbook(day="05/01/2026", *, account="SYNTH0001", buys=100, sells=50, price=10000, ticker="ABC"):
     """Synthetic broker report; never use actual customer account data in fixtures."""
     book = Workbook()
     sheet = book.active
@@ -27,9 +27,9 @@ def workbook(day="05/01/2026", *, account="SYNTH0001", buys=100, sells=50, price
     sheet.append([])
     sheet.append(["STT", "Giao dịch", "Mã", "Khối lượng khớp", "Giá khớp bình quân", "Giá trị khớp"])
     if buys:
-        sheet.append([1, "Mua", "ABC", buys, price, buys * price])
+        sheet.append([1, "Mua", ticker, buys, price, buys * price])
     if sells:
-        sheet.append([2, "Bán", "ABC", sells, 12000, sells * 12000])
+        sheet.append([2, "Bán", ticker, sells, 12000, sells * 12000])
     target = io.BytesIO()
     book.save(target)
     book.close()
@@ -40,7 +40,8 @@ class TradeReconciliationAPITest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.store = SignalStore(Path(directory.name) / "signals.db")
+        self.database_path = Path(directory.name) / "signals.db"
+        self.store = SignalStore(self.database_path)
         store_patch = patch.object(main, "store", self.store)
         store_patch.start()
         self.addCleanup(store_patch.stop)
@@ -76,6 +77,9 @@ class TradeReconciliationAPITest(unittest.TestCase):
         response = self.client.get(BASE)
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    def set_base(self, scope, *, ticker="ABC", quantity=10000):
+        return self.client.put(f"{BASE}/bases", json={"scope": scope, "ticker": ticker, "base_quantity": quantity})
 
     @staticmethod
     def calculated(report):
@@ -148,16 +152,161 @@ class TradeReconciliationAPITest(unittest.TestCase):
         self.assertEqual(position["total_cost"], 4000000)
         self.assertAlmostEqual(position["average_cost"], 4000000 / 150)
 
-    def test_negative_and_zero_daily_nets_never_decrement_accumulated_buy_surplus(self):
+    def test_negative_daily_nets_reduce_surplus_and_zero_daily_net_keeps_average(self):
         self.assertEqual(self.upload("import", workbook(sells=0)).status_code, 200)
-        for day, buys, sells in (("06/01/2026", 50, 100), ("07/01/2026", 50, 50), ("08/01/2026", 0, 200)):
+        for day, buys, sells in (("06/01/2026", 50, 100), ("07/01/2026", 50, 50)):
             response = self.upload("import", workbook(day, buys=buys, sells=sells))
             self.assertEqual(response.status_code, 200, response.text)
         report = self.report()
-        self.assertEqual(len(report["rows"]), 1)
-        self.assertEqual(report["positions"][0]["quantity"], 100)
-        self.assertEqual(report["positions"][0]["total_cost"], 1000000)
+        self.assertEqual(report["method"], "daily_net_inventory_with_base")
+        self.assertEqual(len(report["rows"]), 3)
+        self.assertEqual(report["positions"][0]["quantity"], 50)
+        self.assertEqual(report["positions"][0]["total_cost"], 500000)
         self.assertEqual(report["positions"][0]["average_cost"], 10000)
+        sell_row = next(row for row in report["rows"] if row["trade_date"] == "2026-01-06")
+        self.assertEqual(sell_row["tracked_sell_quantity"], 50)
+        self.assertEqual(sell_row["ignored_sell_quantity"], 0)
+        self.assertEqual(sell_row["closing_quantity"], 50)
+        flat_row = next(row for row in report["rows"] if row["trade_date"] == "2026-01-07")
+        self.assertEqual(flat_row["closing_quantity"], 50)
+        self.assertEqual(flat_row["closing_average_cost"], 10000)
+
+    def test_partial_sale_new_buy_and_backdated_replacement_replay_weighted_cost(self):
+        # Imports deliberately arrive out of order; dates determine the replay.
+        trades = (("08/01/2026", 300, 0, 40000), ("07/01/2026", 0, 300, 10000),
+                  ("05/01/2026", 1000, 0, 20000), ("06/01/2026", 500, 0, 30000))
+        for day, buys, sells, price in trades:
+            response = self.upload("import", workbook(day, buys=buys, sells=sells, price=price))
+            self.assertEqual(response.status_code, 200, response.text)
+        report = self.report()
+        sell_row = next(row for row in report["rows"] if row["trade_date"] == "2026-01-07")
+        self.assertEqual(sell_row["opening_quantity"], 1500)
+        self.assertEqual(sell_row["closing_quantity"], 1200)
+        self.assertAlmostEqual(sell_row["opening_average_cost"], 35000000 / 1500)
+        self.assertEqual(sell_row["closing_average_cost"], sell_row["opening_average_cost"])
+        position = report["positions"][0]
+        self.assertEqual(position["quantity"], 1500)
+        self.assertEqual(position["total_cost"], 40000000)
+        self.assertAlmostEqual(position["average_cost"], 40000000 / 1500)
+        replacement = self.upload("import", workbook("05/01/2026", buys=500, sells=0, price=10000), replace=True)
+        self.assertEqual(replacement.status_code, 200, replacement.text)
+        position = self.report()["positions"][0]
+        self.assertEqual(position["quantity"], 1000)
+        self.assertEqual(position["total_cost"], 26000000)
+        self.assertEqual(position["average_cost"], 26000)
+
+    def test_protected_base_partial_close_oversell_and_reopen_never_consume_base(self):
+        self.assertEqual(self.upload("import", workbook(buys=2000, sells=0, ticker="CII")).status_code, 200)
+        scope = self.report()["selected_scope"]
+        saved = self.set_base(scope, ticker="CII")
+        self.assertEqual(saved.status_code, 200, saved.text)
+        position = self.report()["positions"][0]
+        self.assertEqual(position["base_quantity"], 10000)
+        self.assertEqual(position["quantity"], 2000)
+        self.assertEqual(position["total_quantity"], 12000)
+        self.assertEqual(position["average_cost"], 10000)
+        self.assertEqual(position["total_cost"], 20000000)
+        response = self.upload("import", workbook("06/01/2026", buys=0, sells=500, ticker="CII"))
+        self.assertEqual(response.status_code, 200, response.text)
+        position = self.report()["positions"][0]
+        self.assertEqual(position["quantity"], 1500)
+        self.assertEqual(position["total_quantity"], 11500)
+        self.assertEqual(position["average_cost"], 10000)
+        response = self.upload("import", workbook("07/01/2026", buys=0, sells=2000, ticker="CII"))
+        self.assertEqual(response.status_code, 200, response.text)
+        report = self.report()
+        position = report["positions"][0]
+        self.assertEqual(position["base_quantity"], 10000)
+        self.assertEqual(position["quantity"], 0)
+        self.assertEqual(position["total_quantity"], 10000)
+        self.assertIsNone(position["average_cost"])
+        self.assertEqual(position["total_cost"], 0)
+        self.assertEqual(position["status"], "base_only")
+        oversell = next(row for row in report["rows"] if row["trade_date"] == "2026-01-07")
+        self.assertEqual(oversell["tracked_sell_quantity"], 1500)
+        self.assertEqual(oversell["ignored_sell_quantity"], 500)
+        self.assertEqual(oversell["closing_total_quantity"], 10000)
+        response = self.upload("import", workbook("08/01/2026", buys=1000, sells=0, price=20000, ticker="CII"))
+        self.assertEqual(response.status_code, 200, response.text)
+        position = self.report()["positions"][0]
+        self.assertEqual(position["quantity"], 1000)
+        self.assertEqual(position["total_quantity"], 11000)
+        self.assertEqual(position["average_cost"], 20000)
+        self.assertEqual(position["total_cost"], 20000000)
+        changed = self.set_base(scope, ticker="CII", quantity=12000)
+        self.assertEqual(changed.status_code, 200, changed.text)
+        changed_position = self.report()["positions"][0]
+        self.assertEqual(changed_position["total_quantity"], 13000)
+        for field in ("quantity", "average_cost", "total_cost"):
+            self.assertEqual(changed_position[field], position[field])
+
+    def test_base_settings_persist_after_store_reopen_and_are_account_scoped(self):
+        self.assertEqual(self.upload("import", workbook(sells=0)).status_code, 200)
+        first = self.report()["selected_scope"]
+        self.assertEqual(self.set_base(first).status_code, 200)
+        # A ticker without executions can have an already-owned protected base.
+        self.assertEqual(self.set_base(first, ticker="CII", quantity=5000).status_code, 200)
+        self.assertEqual(self.upload("import", workbook(account="OTHER0001", sells=0, price=20000)).status_code, 200)
+        report = self.report()
+        second = next(item["scope"] for item in report["scopes"] if item["scope"] != first)
+        self.assertEqual(self.set_base(second, quantity=20000).status_code, 200)
+        reopened = SignalStore(self.database_path)
+        with patch.object(main, "store", reopened):
+            first_response = self.client.get(BASE, params={"scope": first})
+            second_response = self.client.get(BASE, params={"scope": second})
+        self.assertEqual(first_response.status_code, 200, first_response.text)
+        self.assertEqual(second_response.status_code, 200, second_response.text)
+        positions = {item["ticker"]: item for item in first_response.json()["positions"]}
+        self.assertEqual(positions["ABC"]["base_quantity"], 10000)
+        self.assertEqual(positions["ABC"]["total_quantity"], 10100)
+        self.assertEqual(positions["CII"]["base_quantity"], 5000)
+        self.assertEqual(positions["CII"]["quantity"], 0)
+        self.assertIsNone(positions["CII"]["average_cost"])
+        other = second_response.json()["positions"][0]
+        self.assertEqual(other["base_quantity"], 20000)
+        self.assertEqual(other["total_quantity"], 20100)
+        self.assertEqual(other["average_cost"], 20000)
+        self.assertEqual({row["ticker"] for row in first_response.json()["bases"]}, {"ABC", "CII"})
+
+    def test_base_rejects_invalid_quantities_tickers_and_unknown_accounts_atomically(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        self.assertEqual(self.set_base(scope).status_code, 200)
+        before = self.report()
+        for quantity in (-1, True, False, 0.5, 10000.0, "10000", None, 10**12 + 1):
+            with self.subTest(quantity=quantity):
+                response = self.set_base(scope, quantity=quantity)
+                self.assertEqual(response.status_code, 422, response.text)
+        for unknown_scope, ticker in (("missing", "ABC"), (scope, "<script>"), (scope, "")):
+            with self.subTest(scope=unknown_scope, ticker=ticker):
+                response = self.set_base(unknown_scope, ticker=ticker)
+                self.assertEqual(response.status_code, 422, response.text)
+        after = self.report()
+        self.assertEqual(self.calculated(after), self.calculated(before))
+        self.assertEqual(after["bases"], before["bases"])
+        zero = self.set_base(scope, quantity=0)
+        self.assertEqual(zero.status_code, 200, zero.text)
+        self.assertEqual(self.report()["positions"][0]["base_quantity"], 0)
+        self.assertEqual(self.report()["positions"][0]["quantity"], 50)
+
+    def test_notes_are_allowed_on_sell_and_flat_days_and_survive_replacement(self):
+        self.assertEqual(self.upload("import", workbook(sells=0)).status_code, 200)
+        row = self.report()["rows"][0]
+        payload = {"scope": row["scope"], "trade_date": "2026-01-05", "ticker": "ABC", "note": "Theo dõi phần dư"}
+        saved = self.client.put(f"{BASE}/notes", json=payload)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        replacement = self.upload("import", workbook(buys=0, sells=100), replace=True)
+        self.assertEqual(replacement.status_code, 200, replacement.text)
+        self.assertEqual(self.report()["rows"][0]["note"], payload["note"])
+        for day, buys, sells in (("06/01/2026", 0, 100), ("07/01/2026", 50, 50)):
+            response = self.upload("import", workbook(day, buys=buys, sells=sells))
+            self.assertEqual(response.status_code, 200, response.text)
+            dated_payload = {**payload, "trade_date": "2026-01-06" if day == "06/01/2026" else "2026-01-07", "note": "Đã đối chiếu"}
+            saved = self.client.put(f"{BASE}/notes", json=dated_payload)
+            self.assertEqual(saved.status_code, 200, saved.text)
+        report = self.report()
+        self.assertEqual(len(report["rows"]), 3)
+        self.assertTrue(all(row["note"] for row in report["rows"]))
 
     def test_notes_persist_and_cannot_create_rows_that_were_never_imported(self):
         self.assertEqual(self.upload("import").status_code, 200)
@@ -178,16 +327,25 @@ class TradeReconciliationAPITest(unittest.TestCase):
         self.assertEqual(self.report()["rows"][0]["note"], "")
 
     def test_authorization_enforces_feature_strategy_scope_and_read_only_mutations(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        self.assertEqual(self.set_base(scope).status_code, 200)
         self.client.cookies.clear()
         self.assertEqual(self.client.get(BASE).status_code, 401)
         self.assertEqual(self.upload("preview").status_code, 401)
+        self.assertEqual(self.client.put(f"{BASE}/bases", json={}).status_code, 401)
         for features, strategies, expected in (([], [], 403), (["tradeReconciliation"], ["RF"], 403), (["tradeReconciliation"], [], 200)):
             with self.subTest(features=features, strategies=strategies):
                 self.authenticate("user", features=features, strategies=strategies)
-                self.assertEqual(self.client.get(BASE).status_code, expected)
+                response = self.client.get(BASE)
+                self.assertEqual(response.status_code, expected)
+                if expected == 200:
+                    self.assertEqual(response.json()["bases"][0]["base_quantity"], 10000)
+                    self.assertEqual(response.json()["positions"][0]["total_quantity"], 10050)
                 self.assertEqual(self.upload("preview").status_code, 403)
                 self.assertEqual(self.upload("import").status_code, 403)
                 self.assertEqual(self.client.put(f"{BASE}/notes", json={}).status_code, 403)
+                self.assertEqual(self.client.put(f"{BASE}/bases", json={}).status_code, 403)
 
     def test_invalid_uploads_are_actionable_and_have_no_side_effects(self):
         before = self.calculated(self.report())

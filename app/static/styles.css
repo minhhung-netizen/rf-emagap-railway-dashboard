@@ -40,7 +40,7 @@
 .reconciliationMethod { border-bottom: 1px solid var(--line-soft); color: var(--muted); padding-bottom: 8px; }
 .reconciliationMethod p { max-width: 1000px; }
 .reconciliationImport { background: var(--field); border: 1px solid var(--line); border-radius: 8px; margin: 20px 0 12px; padding: 16px; }
-.reconciliationUploadActions, .reconciliationFilters { align-items: end; display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.reconciliationUploadActions, .reconciliationFilters, .reconciliationBaseForm { align-items: end; display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
 .reconciliationUploadActions > label { flex: 1 1 300px; min-width: 0; }
 .reconciliationPanel label { color: var(--muted); display: grid; font-size: 12px; gap: 6px; }
 .reconciliationPanel input, .reconciliationPanel select { max-width: none; min-height: 44px; width: 100%; }
@@ -51,6 +51,8 @@
 .reconciliationPanel button:disabled { cursor: not-allowed; opacity: .55; }
 .reconciliationFilters > label { flex: 1 1 150px; }
 .reconciliationFilters > label:first-child { flex-basis: 220px; }
+.reconciliationBaseForm > label { flex: 1 1 190px; min-width: 0; max-width: 300px; }
+.reconciliationBaseForm input[type="number"] { font-variant-numeric: tabular-nums; text-align: right; }
 .reconciliationReplace { align-items: start; display: flex !important; gap: 8px !important; margin-bottom: 14px; }
 .reconciliationReplace[hidden] { display: none !important; }
 .reconciliationPreviewHead { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
@@ -61,7 +63,7 @@
 .reconciliationSection .panelHead { align-items: start; gap: 12px; margin-bottom: 14px; }
 .reconciliationSection .panelHead > span { flex: none; }
 .reconciliationKpis strong { overflow-wrap: anywhere; }
-.reconciliationTableWrap { border: 1px solid var(--line); border-radius: 6px; max-height: 530px; overflow: auto; scrollbar-gutter: stable; }
+.reconciliationTableWrap { border: 1px solid var(--line); border-radius: 6px; max-height: 530px; overflow: auto; position: relative; scrollbar-gutter: stable; }
 .reconciliationTableWrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .reconciliationTable { border-collapse: separate; border-spacing: 0; min-width: 100%; width: max-content; }
 .reconciliationTable th, .reconciliationTable td { border-bottom: 1px solid var(--line-soft); padding: 12px; vertical-align: top; white-space: nowrap; }
@@ -81,6 +83,8 @@
 @media (max-width: 700px) {
   .reconciliationPanel { padding: 15px; }
   .reconciliationUploadActions > button { flex: 1 1 135px; }
+  .reconciliationBaseForm > label { flex-basis: calc(50% - 12px); max-width: none; }
+  .reconciliationBaseForm > button { flex: 1 1 135px; }
   .reconciliationImport { padding: 12px; }
   .reconciliationFilters > label { flex-basis: calc(50% - 12px); min-width: 120px; }
   .reconciliationFilters > label:first-child { flex-basis: 100%; }

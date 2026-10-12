@@ -152,11 +152,11 @@ class ReconciliationTests(unittest.TestCase):
         parsed = parse(rows, **kwargs)
         return service.import_report(self.store, parsed, "tester", replace), parsed
 
-    def test_daily_net_residual_and_weighted_buy_cost_only(self):
+    def test_daily_net_residual_and_weighted_buy_cost_then_partial_sell(self):
         self.add([buy(100, 10000), sell(40)])
         self.add([buy(100, 20000), sell(50)], day="06/01/2026")
         report = service.build_report(self.store)
-        self.assertEqual(report["method"], "daily_buy_surplus_weighted_average")
+        self.assertEqual(report["method"], "daily_net_inventory_with_base")
         position = report["positions"][0]
         self.assertEqual(position["quantity"], 110)
         self.assertEqual(position["total_cost"], 1600000)
@@ -166,26 +166,51 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(newest["opening_average_cost"], 10000)
         self.assertEqual(newest["residual_buy_cost"], 1000000)
         self.assertEqual(newest["closing_quantity"], 110)
+        self.add([buy(20, 25000), sell(100)], day="07/01/2026")
+        report = service.build_report(self.store)
+        position = report["positions"][0]
+        self.assertEqual(position["quantity"], 30)
+        self.assertAlmostEqual(position["average_cost"], 1600000 / 110)
+        self.assertAlmostEqual(position["total_cost"], 30 * 1600000 / 110)
+        newest = report["rows"][0]
+        self.assertEqual(newest["matched_quantity"], 20)
+        self.assertEqual(newest["tracked_sell_quantity"], 80)
+        self.assertEqual(newest["ignored_sell_quantity"], 0)
+        self.assertEqual(newest["residual_buy_cost"], 0)
+        self.add([buy(100, 25000)], day="08/01/2026")
+        position = service.build_report(self.store)["positions"][0]
+        self.assertEqual(position["quantity"], 130)
+        self.assertAlmostEqual(position["average_cost"], (30 * 1600000 / 110 + 2500000) / 130)
 
-    def test_equal_and_excess_sales_never_reduce_previous_buy_inventory(self):
+    def test_equal_has_no_effect_excess_sales_close_cost_and_new_buy_resets_average(self):
         self.add([buy(100, 10000)])
         self.add([buy(100, 20000), sell(100)], day="06/01/2026")
         self.add([buy(50, 20000), sell(1000)], day="07/01/2026")
         self.add([sell(99999)], day="08/01/2026")
         report = service.build_report(self.store)
-        self.assertEqual(len(report["rows"]), 1)
-        self.assertEqual(report["positions"][0]["quantity"], 100)
-        self.assertEqual(report["positions"][0]["average_cost"], 10000)
-        self.assertEqual(report["totals"]["ignored_rows_count"], 3)
+        self.assertEqual(len(report["rows"]), 4)
+        self.assertEqual(report["positions"][0]["quantity"], 0)
+        self.assertIsNone(report["positions"][0]["average_cost"])
+        self.assertEqual(report["positions"][0]["total_cost"], 0)
+        self.assertEqual(report["positions"][0]["status"], "closed")
+        self.assertEqual(report["totals"]["outstanding_tickers"], 0)
+        self.assertEqual(report["totals"]["ignored_rows_count"], 2)
+        self.assertEqual(report["totals"]["ignored_sell_quantity"], 850 + 99999)
+        close = next(r for r in report["rows"] if r["trade_date"] == "2026-01-07")
+        self.assertEqual(close["tracked_sell_quantity"], 100)
+        self.assertEqual(close["ignored_sell_quantity"], 850)
+        self.assertIsNone(close["closing_average_cost"])
         self.assertNotIn("unmatched_sell_quantity", report["totals"])
         self.add([buy(100, 20000)], day="09/01/2026")
         position = service.build_report(self.store)["positions"][0]
-        self.assertEqual(position["quantity"], 200)
-        self.assertEqual(position["average_cost"], 15000)
+        self.assertEqual(position["quantity"], 100)
+        self.assertEqual(position["average_cost"], 20000)
 
     def test_sell_only_import_does_not_offset_future_buy(self):
         self.add([sell(1000)])
-        self.assertEqual(service.build_report(self.store)["positions"], [])
+        report = service.build_report(self.store)
+        self.assertEqual(report["positions"][0]["quantity"], 0)
+        self.assertEqual(report["rows"][0]["ignored_sell_quantity"], 1000)
         self.add([buy(10)], day="06/01/2026")
         self.assertEqual(service.build_report(self.store)["positions"][0]["quantity"], 10)
 
@@ -246,7 +271,7 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(later["selected_scope"], selected)
         self.assertEqual({item["scope"]: item["account_label"] for item in later["scopes"]}, labels)
 
-    def test_notes_persist_with_valid_daily_surplus_and_removed_rows_are_pruned(self):
+    def test_notes_survive_buy_to_sell_replacement_and_removed_tickers_are_pruned(self):
         _, parsed = self.add([buy(), buy(10, ticker="XYZ")])
         saved = service.save_note(self.store, parsed["scope"], parsed["trade_date"], "abc", " Theo dõi mua ", "tester")
         self.assertEqual(saved["note"], "Theo dõi mua")
@@ -256,11 +281,126 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(service.build_report(self.store)["rows"][0]["note"], "Theo dõi mua")
         self.add([sell()], replace=True)
         with self.store.connect() as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM reconciliation_notes").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM reconciliation_notes").fetchone()[0], 1)
+        self.assertEqual(service.build_report(self.store)["rows"][0]["note"], "Theo dõi mua")
+        service.save_note(self.store, parsed["scope"], parsed["trade_date"], "ABC", "Bán phần dư", "tester")
+        self.assertEqual(service.build_report(self.store)["rows"][0]["note"], "Bán phần dư")
+        self.add([buy(), sell(100)], replace=True)
+        service.save_note(self.store, parsed["scope"], parsed["trade_date"], "ABC", "Đối ứng đủ", "tester")
+        self.assertEqual(service.build_report(self.store)["rows"][0]["note"], "Đối ứng đủ")
         with self.assertRaises(ValueError):
-            service.save_note(self.store, parsed["scope"], parsed["trade_date"], "ABC", "cannot note sell", "tester")
+            service.save_note(self.store, parsed["scope"], parsed["trade_date"], "XYZ", "removed ticker", "tester")
         with self.assertRaises(ValueError):
             service.save_note(self.store, parsed["scope"], parsed["trade_date"], "XYZ", "x" * 2001, "tester")
+
+    def test_base_is_already_owned_and_surplus_sales_never_consume_it(self):
+        _, parsed = self.add([buy(2000, 20000, "CII")])
+        saved = service.save_base(self.store, parsed["scope"], "cii", 10000, "tester")
+        self.assertEqual(saved["base_quantity"], 10000)
+        report = service.build_report(self.store)
+        position = report["positions"][0]
+        self.assertEqual(position["base_quantity"], 10000)
+        self.assertEqual(position["quantity"], 2000)
+        self.assertEqual(position["total_quantity"], 12000)
+        self.assertEqual(position["average_cost"], 20000)
+        self.assertEqual(position["total_cost"], 40000000)
+        self.assertEqual(report["bases"][0]["ticker"], "CII")
+        row = report["rows"][0]
+        self.assertEqual(row["opening_total_quantity"], 10000)
+        self.assertEqual(row["closing_total_quantity"], 12000)
+        self.add([sell(500, ticker="CII")], day="06/01/2026")
+        report = service.build_report(self.store)
+        self.assertEqual(report["positions"][0]["total_quantity"], 11500)
+        self.assertEqual(report["positions"][0]["average_cost"], 20000)
+        self.add([sell(9000, ticker="CII")], day="07/01/2026")
+        report = service.build_report(self.store)
+        position = report["positions"][0]
+        self.assertEqual(position["quantity"], 0)
+        self.assertEqual(position["base_quantity"], 10000)
+        self.assertEqual(position["total_quantity"], 10000)
+        self.assertIsNone(position["average_cost"])
+        self.assertEqual(position["total_cost"], 0)
+        self.assertEqual(position["status"], "base_only")
+        self.assertEqual(report["rows"][0]["tracked_sell_quantity"], 1500)
+        self.assertEqual(report["rows"][0]["ignored_sell_quantity"], 7500)
+        self.assertEqual(report["rows"][0]["closing_total_quantity"], 10000)
+        self.assertEqual(report["totals"]["base_quantity"], 10000)
+        self.assertEqual(report["totals"]["total_quantity"], 10000)
+
+    def test_base_can_have_no_source_trade_and_zero_clears_without_changing_cost(self):
+        _, parsed = self.add([buy(100, 10000)])
+        service.save_base(self.store, parsed["scope"], "CII", 10000, "tester")
+        report = service.build_report(self.store)
+        by_ticker = {p["ticker"]: p for p in report["positions"]}
+        self.assertEqual(by_ticker["CII"]["total_quantity"], 10000)
+        self.assertIsNone(by_ticker["CII"]["first_trade_date"])
+        self.assertIsNone(by_ticker["CII"]["average_cost"])
+        self.assertEqual(by_ticker["CII"]["status"], "base_only")
+        self.assertEqual(report["totals"]["outstanding_tickers"], 1)
+        self.assertEqual(report["totals"]["outstanding_quantity"], 100)
+        service.save_base(self.store, parsed["scope"], "ABC", 5000, "tester")
+        before = service.build_report(self.store)["positions"][0]
+        self.assertEqual(before["total_quantity"], 5100)
+        service.save_base(self.store, parsed["scope"], "ABC", 0, "tester")
+        after = service.build_report(self.store)["positions"][0]
+        self.assertEqual(after["quantity"], before["quantity"])
+        self.assertEqual(after["average_cost"], before["average_cost"])
+        self.assertEqual(after["total_cost"], before["total_cost"])
+        self.assertEqual(after["total_quantity"], 100)
+        service.save_base(self.store, parsed["scope"], "CII", 0, "tester")
+        self.assertEqual(service.build_report(self.store)["totals"]["base_quantity"], 0)
+
+    def test_base_quantity_validation_and_unknown_account_are_atomic(self):
+        _, parsed = self.add([buy()])
+        service.save_base(self.store, parsed["scope"], "ABC", 10000, "tester")
+        before = service.build_report(self.store)
+        for quantity in (-1, True, False, 0.5, 1.0, "100", None, 10**12 + 1):
+            with self.subTest(quantity=quantity), self.assertRaises(ValueError):
+                service.save_base(self.store, parsed["scope"], "ABC", quantity, "tester")
+        for ticker in ("", "<script>", "a" * 21, None):
+            with self.subTest(ticker=ticker), self.assertRaises(ValueError):
+                service.save_base(self.store, parsed["scope"], ticker, 100, "tester")
+        with self.assertRaises(ValueError):
+            service.save_base(self.store, "unknown", "ABC", 100, "tester")
+        self.assertEqual(service.build_report(self.store), before)
+        service.save_base(self.store, parsed["scope"], "ABC", 10**12, "tester")
+        self.assertEqual(service.build_report(self.store)["positions"][0]["base_quantity"], 10**12)
+
+    def test_base_and_sales_are_isolated_by_account_and_subaccount(self):
+        _, first = self.add([buy(100, 10000)], account="SYNTH0001")
+        _, second = self.add([buy(100, 20000)], account="OTHER0001")
+        _, third = self.add([buy(100, 30000)], account="SYNTH0001", subaccount="Ký quỹ")
+        service.save_base(self.store, first["scope"], "ABC", 10000, "tester")
+        self.add([sell(1000)], day="06/01/2026", account="SYNTH0001")
+        report = service.build_report(self.store, first["scope"])
+        self.assertEqual(report["positions"][0]["quantity"], 0)
+        self.assertEqual(report["positions"][0]["total_quantity"], 10000)
+        for parsed, cost in ((second, 20000), (third, 30000)):
+            report = service.build_report(self.store, parsed["scope"])
+            self.assertEqual(report["positions"][0]["quantity"], 100)
+            self.assertEqual(report["positions"][0]["base_quantity"], 0)
+            self.assertEqual(report["positions"][0]["average_cost"], cost)
+            self.assertEqual(report["bases"], [])
+
+    def test_backdated_sell_and_replacement_replay_inventory_above_current_base(self):
+        _, parsed = self.add([buy(100, 20000)], day="07/01/2026")
+        service.save_base(self.store, parsed["scope"], "ABC", 10000, "tester")
+        self.add([buy(100, 10000)], day="05/01/2026")
+        _, sold = self.add([sell(50)], day="06/01/2026")
+        service.save_note(self.store, sold["scope"], sold["trade_date"], "ABC", "Bán dư mua", "tester")
+        report = service.build_report(self.store)
+        self.assertEqual(report["positions"][0]["quantity"], 150)
+        self.assertAlmostEqual(report["positions"][0]["average_cost"], 2500000 / 150)
+        self.add([buy(20, 10000)], day="05/01/2026", replace=True)
+        report = service.build_report(self.store)
+        self.assertEqual(report["positions"][0]["quantity"], 100)
+        self.assertEqual(report["positions"][0]["average_cost"], 20000)
+        self.assertEqual(report["positions"][0]["total_quantity"], 10100)
+        self.assertEqual(report["rows"][0]["opening_total_quantity"], 10000)
+        sale = next(r for r in report["rows"] if r["trade_date"] == "2026-01-06")
+        self.assertEqual(sale["tracked_sell_quantity"], 20)
+        self.assertEqual(sale["ignored_sell_quantity"], 30)
+        self.assertEqual(sale["note"], "Bán dư mua")
 
     def test_decimal_source_values_are_preserved_and_no_ledger_or_nav_writes(self):
         self.add([["Mua", "ABC", 3, "0.1", "0.3"], ["Bán", "ABC", 1, "0.2", "0.2"]])
