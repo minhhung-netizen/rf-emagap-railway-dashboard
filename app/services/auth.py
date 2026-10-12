@@ -12,6 +12,7 @@ ALL_FEATURES = [
     "positions",
     "performance",
     "portfolioMonitor",
+    "tradeReconciliation",
     "dividends",
     "logs",
 ]

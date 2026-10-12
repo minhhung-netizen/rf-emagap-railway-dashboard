@@ -22,6 +22,73 @@
   --focus: 0 0 0 3px rgb(124 58 237 / 20%);
 }
 
+/* Daily Excel fills: keep source dates and VND costs legible at every viewport. */
+.reconciliationPanel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+  padding: 22px;
+}
+.reconciliationPanel[hidden], .reconciliationPanel [hidden] { display: none; }
+.reconciliationPanel h2 { font-size: 23px; margin: 4px 0 8px; }
+.reconciliationPanel h3 { font-size: 16px; margin: 0 0 8px; }
+.reconciliationPanel h4 { margin: 0 0 8px; }
+.reconciliationPanel p { margin: 8px 0; }
+.reconciliationPanel summary { cursor: pointer; font-weight: 600; min-height: 44px; padding: 12px 0; }
+.reconciliationMethod { border-bottom: 1px solid var(--line-soft); color: var(--muted); padding-bottom: 8px; }
+.reconciliationMethod p { max-width: 1000px; }
+.reconciliationImport { background: var(--field); border: 1px solid var(--line); border-radius: 8px; margin: 20px 0 12px; padding: 16px; }
+.reconciliationUploadActions, .reconciliationFilters { align-items: end; display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.reconciliationUploadActions > label { flex: 1 1 300px; min-width: 0; }
+.reconciliationPanel label { color: var(--muted); display: grid; font-size: 12px; gap: 6px; }
+.reconciliationPanel input, .reconciliationPanel select { max-width: none; min-height: 44px; width: 100%; }
+.reconciliationPanel input[type="file"] { padding: 8px; text-transform: none; }
+.reconciliationPanel input[type="date"] { text-transform: none; }
+.reconciliationPanel input[type="checkbox"] { min-height: 18px; width: 18px; }
+.reconciliationPanel button { min-height: 44px; white-space: normal; }
+.reconciliationPanel button:disabled { cursor: not-allowed; opacity: .55; }
+.reconciliationFilters > label { flex: 1 1 150px; }
+.reconciliationFilters > label:first-child { flex-basis: 220px; }
+.reconciliationReplace { align-items: start; display: flex !important; gap: 8px !important; margin-bottom: 14px; }
+.reconciliationReplace[hidden] { display: none !important; }
+.reconciliationPreviewHead { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
+.reconciliationStatus { color: var(--muted); min-height: 24px; }
+.reconciliationError { color: var(--sell); }
+.reconciliationNotice { background: var(--field); border-left: 3px solid var(--warning); padding: 10px 14px; }
+.reconciliationSection { border-top: 1px solid var(--line-soft); margin-top: 22px; padding-top: 18px; }
+.reconciliationSection .panelHead { align-items: start; gap: 12px; margin-bottom: 14px; }
+.reconciliationSection .panelHead > span { flex: none; }
+.reconciliationKpis strong { overflow-wrap: anywhere; }
+.reconciliationTableWrap { border: 1px solid var(--line); border-radius: 6px; max-height: 530px; overflow: auto; scrollbar-gutter: stable; }
+.reconciliationTableWrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.reconciliationTable { border-collapse: separate; border-spacing: 0; min-width: 100%; width: max-content; }
+.reconciliationTable th, .reconciliationTable td { border-bottom: 1px solid var(--line-soft); padding: 12px; vertical-align: top; white-space: nowrap; }
+.reconciliationTable thead th { background: var(--table-head); box-shadow: 0 1px 0 var(--line); color: var(--muted); position: sticky; top: 0; z-index: 2; }
+.reconciliationTable thead th:first-child { left: 0; z-index: 3; }
+.reconciliationTable .reconciliationTicker { background: var(--panel); color: var(--ink); left: 0; position: sticky; text-align: left; top: auto; z-index: 1; }
+.reconciliationTable tbody tr:hover td, .reconciliationTable tbody tr:hover .reconciliationTicker { background: var(--row-hover); }
+.reconciliationTable .numeric { font-variant-numeric: tabular-nums; text-align: right; }
+.reconciliationTable .reconciliationEmpty { color: var(--muted); padding: 28px 16px; white-space: normal; }
+.reconciliationTable .reconciliationNote { min-width: 255px; overflow-wrap: anywhere; white-space: normal; width: 280px; }
+.reconciliationNote textarea { background: var(--field); border: 1px solid var(--line); border-radius: 5px; color: var(--ink); display: block; font: inherit; max-width: none; min-height: 60px; padding: 9px; resize: vertical; width: 100%; }
+.reconciliationNote textarea:focus-visible { border-color: var(--accent); box-shadow: var(--focus); outline: none; }
+.reconciliationNote button { font-size: 12px; margin-top: 6px; }
+.reconciliationBadge { border: 1px solid var(--line); border-radius: 6px; display: inline-block; font-size: 12px; padding: 4px 8px; }
+.reconciliationBadge.remaining { background: color-mix(in srgb, var(--buy) 10%, var(--panel)); border-color: color-mix(in srgb, var(--buy) 40%, var(--line)); color: var(--buy); }
+.reconciliationSrOnly { clip: rect(0, 0, 0, 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+@media (max-width: 700px) {
+  .reconciliationPanel { padding: 15px; }
+  .reconciliationUploadActions > button { flex: 1 1 135px; }
+  .reconciliationImport { padding: 12px; }
+  .reconciliationFilters > label { flex-basis: calc(50% - 12px); min-width: 120px; }
+  .reconciliationFilters > label:first-child { flex-basis: 100%; }
+  .reconciliationKpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .reconciliationKpis strong { font-size: 18px; }
+  .reconciliationTableWrap { max-height: 460px; }
+}
+
 [data-theme="dark"] {
   color-scheme: dark;
   --bg: #0b1118;

@@ -314,6 +314,7 @@ const FEATURE_LABELS = {
   positions: "Vị thế",
   performance: "Hiệu suất",
   portfolioMonitor: "RF + EMA Monitor",
+  tradeReconciliation: "Đối chiếu khớp lệnh",
   dividends: "Cổ tức",
   logs: "Nhật ký",
 };
@@ -3002,6 +3003,7 @@ function setAuthenticatedUser(user, availableFeatures, availableStrategies = [])
 
 function showLogin() {
   window.FundAnalytics?.clear();
+  window.TradeReconciliation?.clear();
   state.user = null;
   state.dcaSettings = { initialCapital: null, updatedAt: "" };
   els.dcaInitialCapital.value = formatDcaInitialCapitalValue(els.dcaInitialCapital.defaultValue || "");
@@ -3045,7 +3047,9 @@ function applyAccessControl() {
   document.querySelectorAll("[data-tab-target]").forEach((button) => {
     const target = button.dataset.tabTarget;
     const feature = target === "leadingSignals" ? "overview" : target;
-    const visible = target === "admin"
+    const visible = target === "tradeReconciliation" && !isAdmin && state.user?.strategies?.length
+      ? false
+      : target === "admin"
       ? isAdmin
       : target === "workflow"
         ? isAdmin || allowed.has("portfolioMonitor")
@@ -3055,7 +3059,9 @@ function applyAccessControl() {
   document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
     const target = panel.dataset.tabPanel;
     const feature = target === "leadingSignals" ? "overview" : target;
-    const visible = target === "admin"
+    const visible = target === "tradeReconciliation" && !isAdmin && state.user?.strategies?.length
+      ? false
+      : target === "admin"
       ? isAdmin
       : target === "workflow"
         ? isAdmin || allowed.has("portfolioMonitor")
@@ -3355,6 +3361,7 @@ async function refresh() {
   renderRiskOverview();
   renderRiskAlerts();
   await window.FundAnalytics?.refresh(state.user);
+  await window.TradeReconciliation?.refresh(state.user);
   state.lastRefreshAt = new Date();
   els.syncStatus.textContent = state.marketDataProvider === "unavailable"
     ? t("marketDataUnavailable")

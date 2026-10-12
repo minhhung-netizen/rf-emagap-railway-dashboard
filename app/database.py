@@ -9,6 +9,27 @@ from typing import Any, Iterator
 
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS reconciliation_imports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL,
+    account_label TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    digest TEXT NOT NULL,
+    rows_json TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(scope, trade_date)
+);
+CREATE TABLE IF NOT EXISTS reconciliation_notes (
+    scope TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    note TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(scope, trade_date, ticker)
+);
 CREATE TABLE IF NOT EXISTS ledger_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     reference TEXT NOT NULL UNIQUE,

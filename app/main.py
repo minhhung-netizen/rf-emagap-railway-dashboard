@@ -11,12 +11,14 @@ from contextlib import asynccontextmanager
 from datetime import date
 from importlib.util import find_spec
 from typing import Any
+from urllib.parse import unquote
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from app.config import PROJECT_ROOT, get_settings
 from app.database import SignalStore, utc_now_iso
@@ -65,7 +67,7 @@ from app.services.webhook_payload import parse_forgiving_json, parse_tradingview
 from app.services.fund_analytics import (
     NavImport, RiskPolicy, build_fund_performance, build_market_risk,
 )
-from app.services import trade_ledger
+from app.services import trade_ledger, trade_reconciliation
 from app.services.auth import (
     ALL_FEATURES,
     SESSION_COOKIE,
@@ -180,7 +182,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "app" / "static"), name="static")
@@ -196,6 +198,7 @@ FEATURE_PATHS = {
     "positions": ("/api/performance", "/api/sectors", "/api/market-risk"),
     "performance": ("/api/performance", "/api/fund-performance"),
     "portfolioMonitor": ("/api/portfolio-backtests", "/api/portfolio-gate"),
+    "tradeReconciliation": ("/api/trade-reconciliation",),
     "dividends": ("/api/dividend-events",),
     "logs": ("/api/invalid-signals", "/api/export/"),
 }
@@ -1298,6 +1301,84 @@ def ledger_action(fn, *args):
         return fn(store, *args)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class ReconciliationNote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: str = Field(min_length=1, max_length=64)
+    trade_date: date
+    ticker: str = Field(min_length=1, max_length=20)
+    note: str = Field(max_length=2000)
+
+
+def require_reconciliation_access(request: Request) -> None:
+    if strategy_restricted(request.state.user):
+        raise HTTPException(
+            status_code=403,
+            detail="Đối chiếu khớp lệnh cần tài khoản không giới hạn chiến lược",
+        )
+
+
+def reconciliation_action(fn, *args):
+    try:
+        return fn(*args)
+    except trade_reconciliation.ReconciliationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def read_reconciliation_upload(request: Request) -> dict[str, Any]:
+    max_bytes = 10 * 1024 * 1024
+    try:
+        declared_size = int(request.headers.get("content-length", "0"))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Kích thước file không hợp lệ")
+    if declared_size > max_bytes:
+        raise HTTPException(status_code=413, detail="File Excel tối đa 10 MB")
+    content = bytearray()
+    async for chunk in request.stream():
+        if len(content) + len(chunk) > max_bytes:
+            raise HTTPException(status_code=413, detail="File Excel tối đa 10 MB")
+        content.extend(chunk)
+    filename = unquote(request.headers.get("x-filename", "report.xlsx"))
+    return await run_in_threadpool(
+        reconciliation_action, trade_reconciliation.parse_workbook, bytes(content), filename,
+    )
+
+
+@app.get("/api/trade-reconciliation")
+def get_trade_reconciliation(request: Request, scope: str | None = None):
+    require_reconciliation_access(request)
+    return reconciliation_action(trade_reconciliation.build_report, store, scope)
+
+
+@app.post("/api/trade-reconciliation/preview")
+async def preview_trade_reconciliation(request: Request):
+    parsed = await read_reconciliation_upload(request)
+    parsed["import_state"] = await run_in_threadpool(
+        trade_reconciliation.assess_import, store, parsed,
+    )
+    return parsed
+
+
+@app.post("/api/trade-reconciliation/import")
+async def import_trade_reconciliation(request: Request, replace_existing: bool = False):
+    parsed = await read_reconciliation_upload(request)
+    return await run_in_threadpool(
+        reconciliation_action, trade_reconciliation.import_report, store, parsed,
+        request.state.user["username"], replace_existing,
+    )
+
+
+@app.put("/api/trade-reconciliation/notes")
+def save_reconciliation_note(payload: ReconciliationNote, request: Request):
+    return reconciliation_action(
+        trade_reconciliation.save_note, store, payload.scope,
+        payload.trade_date.isoformat(), payload.ticker, payload.note,
+        request.state.user["username"],
+    )
 
 
 @app.get("/api/admin/ledger")

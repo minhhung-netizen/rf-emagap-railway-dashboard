@@ -1,6 +1,6 @@
 # Hướng dẫn RF + EMA Portfolio Gate Dashboard
 
-Cập nhật: 11/10/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
+Cập nhật: 12/10/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
 
 ## 1. Phạm vi và nguồn dữ liệu
 
@@ -211,11 +211,28 @@ Kiểm tra đầu vào vẫn áp dụng cho mọi webhook: secret, action/sleeve
 | **Hiệu suất** | NAV/TWR/XIRR nếu có NAV; thống kê tín hiệu riêng với phạm vi toàn Gate hoặc rebalance mới nhất |
 | **RF + EMA Monitor** | Snapshot backtest, exposure trong danh sách, số vị thế theo dõi, danh sách RF Stock MTF hiển thị trước EMA Gap Daily và trần |
 | **Quy trình vận hành** | Lịch rebalance và chuỗi thao tác theo thứ tự CDP TradingView → RF → EMA Gap → publish snapshot → chốt rebalance → theo dõi; lệnh npm thuộc dự án backtest riêng |
+| **Đối chiếu khớp lệnh** | Nhập Excel TCBS, đối ứng mua/bán từng mã trong ngày, ghi chú và lũy kế phần dư mua cùng giá vốn bình quân |
 | **Cổ tức** | Lịch quyền/cổ tức, nhập thủ công và kiểm tra mã đang mở |
 | **Nhật ký** | Webhook trùng/bị từ chối cùng lý do |
 | **Quản trị** | Sổ giao dịch, NAV, chính sách rủi ro, dữ liệu/sao lưu, tài khoản, nhóm ngành |
 
 Tab **Quản trị** có 6 tab con, ghi nhớ tab đã chọn và hỗ trợ URL `#admin/ledger`, `#admin/nav`, `#admin/risk`, `#admin/data`, `#admin/users`, `#admin/sectors`. Có thể dùng phím mũi tên trái/phải và Home/End để chuyển tab con.
+
+### Đối chiếu khớp lệnh từ Excel
+
+Admin mở **Đối chiếu khớp lệnh**, chọn báo cáo `.xlsx` theo mẫu **BÁO CÁO KẾT QUẢ KHỚP LỆNH** của TCBS, bấm xem trước rồi lưu. File tối đa 10 MB; ngày lấy từ dòng **Ngày giao dịch** trong báo cáo, không lấy ngày upload. Cần các cột **Giao dịch**, **Mã**, **Khối lượng khớp**, **Giá khớp bình quân**, **Giá trị khớp**. Các dòng cùng mã/chiều được cộng lại. File sai định dạng, thiếu ngày/tài khoản hoặc số liệu không hợp lệ bị từ chối trước khi lưu.
+
+Theo yêu cầu chỉ theo dõi tồn mua, đối ứng trong từng ngày: `đối ứng = min(SL mua, SL bán)`; `dư mua = max(SL mua - SL bán, 0)`. Chỉ ngày có dư mua được ghi vào lịch sử tồn mua. Khi bán bằng hoặc vượt mua, bỏ qua phần bán dư và giữ nguyên tồn mua đã ghi nhận từ các ngày trước. Đây là thống kê dư mua lũy kế, không phản ánh lượng chứng khoán thực còn trong tài khoản sau các giao dịch bán.
+
+Giá mua bình quân ngày = **tổng giá trị mua / tổng SL mua** (VND/cổ phiếu), ưu tiên giá trị khớp để tránh sai số do cột giá bình quân đã làm tròn. Giá vốn mới = `(SL tồn trước × giá vốn trước + dư mua ngày × giá mua bình quân ngày) / (SL tồn trước + dư mua ngày)`. Ví dụ tồn 100 cổ phiếu giá 10.000 VND; ngày sau mua 200 giá bình quân 12.000 VND và bán 50: cộng dư mua 150, tồn lũy kế 250 và giá vốn mới 11.200 VND. Giá vốn này chưa gồm phí/thuế vì mẫu không có các khoản đó.
+
+Tồn mua và lịch sử được tách theo tài khoản/tiểu khoản; giao diện chỉ hiển thị tài khoản đã che bớt số. Chọn phạm vi trước khi đọc giá vốn. Nhập báo cáo ngày cũ sẽ tính lại các ngày tiếp theo theo thứ tự ngày giao dịch; bộ lọc ngày/mã chỉ đổi phần hiển thị. Có thể lưu ghi chú cho từng ngày/mã dư mua. Ghi chú không làm thay đổi số lượng hoặc giá vốn.
+
+Một tài khoản/tiểu khoản chỉ có một báo cáo cho mỗi ngày: upload lại dữ liệu giống nhau không cộng hai lần. Nếu báo cáo cùng ngày thay đổi, xem trước và chọn **thay thế** để xác nhận thay toàn bộ báo cáo ngày đó, rồi tính lại lũy kế; giữ ghi chú của các ngày/mã còn tồn tại. Vì vậy hãy dùng báo cáo đầy đủ của phiên, không nhập từng phần của cùng ngày. Dữ liệu lưu trong SQLite/Volume hiện có; Excel gốc không được lưu.
+
+Tài khoản `user` chỉ được xem khi admin cấp tính năng `tradeReconciliation` và không giới hạn chiến lược; chỉ admin được upload, thay thế và ghi chú. API đọc `GET /api/trade-reconciliation?scope=...`; xem trước/lưu dùng `POST /api/trade-reconciliation/preview` và `/import?replace_existing=true|false`, body là file nhị phân, header `X-Filename` chứa tên file đã URL-encode; ghi chú dùng `PUT /api/trade-reconciliation/notes` với `{scope, trade_date, ticker, note}` (ngày ISO, ghi chú tối đa 2.000 ký tự). Các API cần session đăng nhập; file lỗi trả `422`, quá dung lượng `413`, báo cáo trùng ngày khác dữ liệu chưa chọn thay thế trả `409`.
+
+Module này lưu thống kê riêng, không tự tạo bút toán Sổ giao dịch, sửa NAV hoặc mở/đóng vị thế Gate từ TradingView.
 
 ## 9. Quản trị dữ liệu thực
 
@@ -253,6 +270,7 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
+| 12/10/2026 | Thêm Đối chiếu khớp lệnh: xem trước/import Excel TCBS theo tài khoản và ngày, chống cộng trùng, thay thế báo cáo, ghi chú từng mã/ngày; chỉ lũy kế dư mua và giá vốn bình quân, bỏ qua dư bán theo yêu cầu. |
 | 11/10/2026 | Tín hiệu sớm giữ nguyên khi RF/EMA mở, xác nhận hoặc đóng vị thế; chỉ ẩn khi hết hạn/đổi chiều cùng mã, chỉ báo và khung. Tách hiệu lực khỏi liên hệ lịch sử với lệnh mua; thêm ngành trong API, lọc ngành và loại tín hiệu hiện có, sắp xếp theo cột, mở rộng vùng bảng và nút xóa từng tín hiệu cho admin. |
 | 03/10/2026 | Đưa toàn bộ chỉ số và bảng rebalance RF Stock MTF lên trên EMA Gap Daily trong tab RF + EMA Monitor. |
 | 27/09/2026 | Tạo hướng dẫn chính cho bản Railway; làm rõ Gate quản lý rebalance đúng sleeve, vị thế ngoài danh sách vẫn được theo dõi, quy trình CDP bắt buộc trước khi refresh EMA Gap, checklist theo thứ tự thực thi và publish RF quý giữ EMA gần nhất. |
