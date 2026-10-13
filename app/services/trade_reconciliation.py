@@ -35,7 +35,11 @@ HEADERS = {
 
 
 class ReconciliationConflict(ValueError):
-    """An account/date already has a different complete report."""
+    """An import conflicts or a deletion snapshot has changed."""
+
+
+class ReconciliationNotFound(ValueError):
+    """The selected imported report or account no longer exists."""
 
 
 def _normalize(value) -> str:
@@ -184,6 +188,35 @@ def _digest(scope, trade_date, canonical):
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _revision(payload):
+    """Hash persisted content and audit fields, never computed holdings."""
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _report_revision(item, notes):
+    report_notes = [n for n in notes if n["scope"] == item["scope"] and n["trade_date"] == item["trade_date"]]
+    return _revision(dict(report=item, notes=sorted(report_notes, key=lambda n: n["ticker"])))
+
+
+def _scope_revision(scope, imports, notes, bases):
+    return _revision(dict(scope=scope,
+                          imports=sorted((i for i in imports if i["scope"] == scope), key=lambda i: (i["trade_date"], i["id"])),
+                          notes=sorted((n for n in notes if n["scope"] == scope), key=lambda n: (n["trade_date"], n["ticker"])),
+                          bases=sorted((b for b in bases if b["scope"] == scope), key=lambda b: b["ticker"])))
+
+
+def _scope_data(conn, scope):
+    return tuple([dict(r) for r in conn.execute(f"SELECT * FROM {table} WHERE scope=?", (scope,))]
+                 for table in ("reconciliation_imports", "reconciliation_notes", "reconciliation_bases"))
+
+
+def _check_revision(expected, current):
+    if not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected):
+        raise ValueError("Cần phiên bản dữ liệu hợp lệ trước khi xóa; hãy tải lại dữ liệu")
+    if expected != current:
+        raise ReconciliationConflict("Dữ liệu đã thay đổi; hãy tải lại và kiểm tra trước khi xóa")
+
+
 def _public_row(row):
     buy, sell = row["buy_quantity"], row["sell_quantity"]
     ba, sa = Decimal(row["buy_amount"]), Decimal(row["sell_amount"])
@@ -310,9 +343,12 @@ def import_report(store, parsed: dict, username, replace_existing=False) -> dict
 
 def build_report(store, scope=None) -> dict:
     with store.connect() as conn:
+        # A deferred read transaction keeps the exposed revisions consistent
+        # with the report, even if another session edits notes or imports.
+        conn.execute("BEGIN")
         imports = [dict(r) for r in conn.execute("SELECT * FROM reconciliation_imports ORDER BY trade_date,id")]
-        notes = {(r["scope"], r["trade_date"], r["ticker"]): r["note"]
-                 for r in conn.execute("SELECT * FROM reconciliation_notes")}
+        all_notes = [dict(r) for r in conn.execute("SELECT * FROM reconciliation_notes")]
+        notes = {(r["scope"], r["trade_date"], r["ticker"]): r["note"] for r in all_notes}
         all_bases = [dict(r) for r in conn.execute("SELECT * FROM reconciliation_bases ORDER BY scope,ticker")]
     scope_map = {}
     for item in imports:
@@ -320,6 +356,9 @@ def build_report(store, scope=None) -> dict:
                                                    first_trade_date=item["trade_date"], last_trade_date=item["trade_date"], imports_count=0))
         s["last_trade_date"] = item["trade_date"]
         s["imports_count"] += 1
+    for base in all_bases:
+        scope_map.setdefault(base["scope"], dict(scope=base["scope"], account_label="Tài khoản · #" + base["scope"][-6:],
+                                                first_trade_date=None, last_trade_date=None, imports_count=0))
     if scope and scope not in scope_map:
         raise ValueError("Không tìm thấy tài khoản đối chiếu")
     scopes = sorted(scope_map.values(), key=lambda s: (s["account_label"], s["scope"]))
@@ -391,8 +430,9 @@ def build_report(store, scope=None) -> dict:
                      for p in holdings.values()]
         total_cost = float(sum((p["cost"] for p in holdings.values()), Decimal(0)))
     metadata = [{k: v for k, v in i.items() if k not in {"rows_json", "digest"}} |
-                dict(rows_count=len(json.loads(i["rows_json"]))) for i in selected]
+                dict(rows_count=len(json.loads(i["rows_json"])), revision=_report_revision(i, all_notes)) for i in selected]
     return dict(scopes=scopes, selected_scope=selected_scope, bases=bases,
+                revision=_scope_revision(selected_scope, imports, all_notes, all_bases) if selected_scope else None,
                 imports=list(reversed(metadata)), rows=sorted(rows, key=lambda r: (r["trade_date"], r["ticker"], r["scope"]), reverse=True),
                 positions=sorted(positions, key=lambda p: (p["ticker"], p["scope"])),
                 totals=dict(imports_count=len(selected), daily_rows_count=len(rows), ignored_rows_count=ignored,
@@ -436,9 +476,49 @@ def save_base(store, scope, ticker, quantity, username) -> dict:
     updated = utc_now_iso()
     with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        if conn.execute("SELECT 1 FROM reconciliation_imports WHERE scope=? LIMIT 1", (scope,)).fetchone() is None:
-            raise ValueError("Không tìm thấy tài khoản đối chiếu đã có báo cáo")
+        if conn.execute("SELECT 1 FROM reconciliation_imports WHERE scope=? UNION ALL "
+                        "SELECT 1 FROM reconciliation_bases WHERE scope=? LIMIT 1", (scope, scope)).fetchone() is None:
+            raise ValueError("Không tìm thấy tài khoản đối chiếu đã có báo cáo hoặc cổ phiếu cơ sở")
         conn.execute("INSERT INTO reconciliation_bases(scope,ticker,base_quantity,updated_by,updated_at) VALUES(?,?,?,?,?) "
                      "ON CONFLICT(scope,ticker) DO UPDATE SET base_quantity=excluded.base_quantity,updated_by=excluded.updated_by,updated_at=excluded.updated_at",
                      (scope, ticker, quantity, username, updated))
     return dict(scope=scope, ticker=ticker, base_quantity=quantity, updated_by=username, updated_at=updated)
+
+
+def delete_report(store, scope, import_id, expected_revision) -> dict:
+    """Delete exactly one imported day and its notes, preserving every base."""
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Cần chọn tài khoản đối chiếu")
+    if isinstance(import_id, bool) or not isinstance(import_id, int) or import_id <= 0:
+        raise ValueError("Báo cáo cần xóa không hợp lệ")
+    with store.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM reconciliation_imports WHERE scope=? AND id=?", (scope, import_id)).fetchone()
+        if row is None:
+            raise ReconciliationNotFound("Không tìm thấy báo cáo cần xóa trong tài khoản đã chọn")
+        item = dict(row)
+        notes = [dict(r) for r in conn.execute("SELECT * FROM reconciliation_notes WHERE scope=? AND trade_date=?",
+                                               (scope, item["trade_date"]))]
+        _check_revision(expected_revision, _report_revision(item, notes))
+        deleted_notes = conn.execute("DELETE FROM reconciliation_notes WHERE scope=? AND trade_date=?",
+                                     (scope, item["trade_date"])).rowcount
+        deleted_imports = conn.execute("DELETE FROM reconciliation_imports WHERE scope=? AND id=?", (scope, import_id)).rowcount
+    return dict(scope=scope, import_id=import_id, trade_date=item["trade_date"],
+                deleted_imports_count=deleted_imports, deleted_notes_count=deleted_notes, deleted_bases_count=0)
+
+
+def delete_scope(store, scope, expected_revision) -> dict:
+    """Clear imports, notes and bases for one account under a checked snapshot."""
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Cần chọn tài khoản đối chiếu")
+    with store.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        imports, notes, bases = _scope_data(conn, scope)
+        if not imports and not notes and not bases:
+            raise ReconciliationNotFound("Không tìm thấy dữ liệu đối chiếu của tài khoản đã chọn")
+        _check_revision(expected_revision, _scope_revision(scope, imports, notes, bases))
+        deleted_notes = conn.execute("DELETE FROM reconciliation_notes WHERE scope=?", (scope,)).rowcount
+        deleted_imports = conn.execute("DELETE FROM reconciliation_imports WHERE scope=?", (scope,)).rowcount
+        deleted_bases = conn.execute("DELETE FROM reconciliation_bases WHERE scope=?", (scope,)).rowcount
+    return dict(scope=scope, deleted_imports_count=deleted_imports,
+                deleted_notes_count=deleted_notes, deleted_bases_count=deleted_bases)

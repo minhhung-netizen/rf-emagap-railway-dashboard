@@ -59,6 +59,13 @@
 .reconciliationStatus { color: var(--muted); min-height: 24px; }
 .reconciliationError { color: var(--sell); }
 .reconciliationNotice { background: var(--field); border-left: 3px solid var(--warning); padding: 10px 14px; }
+.reconciliationHistoryActions { align-items: center; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin: 8px 0 14px; }
+.reconciliationHistoryActions p { flex: 1 1 320px; }
+.smallButton.reconciliationDangerButton { background: var(--panel); border-color: var(--sell); color: var(--sell); }
+.smallButton.reconciliationDangerButton:hover:not(:disabled) { background: color-mix(in srgb, var(--sell) 10%, var(--panel)); border-color: var(--sell); color: var(--sell); }
+.reconciliationDeleteConfirmation { background: var(--field); border: 1px solid var(--sell); border-radius: 8px; margin-top: 22px; padding: 16px; scroll-margin: 20px; }
+.reconciliationDeleteConfirmation p { overflow-wrap: anywhere; }
+.reconciliationDeleteActions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; }
 .reconciliationSection { border-top: 1px solid var(--line-soft); margin-top: 22px; padding-top: 18px; }
 .reconciliationSection .panelHead { align-items: start; gap: 12px; margin-bottom: 14px; }
 .reconciliationSection .panelHead > span { flex: none; }

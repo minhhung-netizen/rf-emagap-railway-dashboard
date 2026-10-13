@@ -13,7 +13,7 @@ from importlib.util import find_spec
 from typing import Any
 from urllib.parse import unquote
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Path, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -1331,6 +1331,8 @@ def require_reconciliation_access(request: Request) -> None:
 def reconciliation_action(fn, *args):
     try:
         return fn(*args)
+    except trade_reconciliation.ReconciliationNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except trade_reconciliation.ReconciliationConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -1394,6 +1396,31 @@ def save_reconciliation_base(payload: ReconciliationBase, request: Request):
     return reconciliation_action(
         trade_reconciliation.save_base, store, payload.scope,
         payload.ticker, payload.base_quantity, request.state.user["username"],
+    )
+
+
+@app.delete("/api/trade-reconciliation/imports/{import_id}")
+def delete_reconciliation_import(
+    request: Request,
+    import_id: int = Path(gt=0),
+    scope: str = Query(min_length=1, max_length=64),
+    expected_revision: str = Query(pattern=r"^[0-9a-f]{64}$"),
+):
+    require_reconciliation_access(request)
+    return reconciliation_action(
+        trade_reconciliation.delete_report, store, scope, import_id, expected_revision,
+    )
+
+
+@app.delete("/api/trade-reconciliation/accounts/{scope}")
+def delete_reconciliation_account(
+    request: Request,
+    scope: str = Path(min_length=1, max_length=64),
+    expected_revision: str = Query(pattern=r"^[0-9a-f]{64}$"),
+):
+    require_reconciliation_access(request)
+    return reconciliation_action(
+        trade_reconciliation.delete_scope, store, scope, expected_revision,
     )
 
 

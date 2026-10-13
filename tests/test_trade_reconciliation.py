@@ -402,6 +402,194 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(sale["ignored_sell_quantity"], 30)
         self.assertEqual(sale["note"], "Bán dư mua")
 
+    def test_delete_purchase_and_sale_replay_later_inventory_without_touching_bases_or_other_accounts(self):
+        _, first = self.add([buy(100, 10000)])
+        _, second = self.add([buy(100, 20000)], day="06/01/2026")
+        self.add([sell(50)], day="07/01/2026")
+        _, other = self.add([buy(100, 30000)], account="OTHER0001")
+        scope = first["scope"]
+        service.save_base(self.store, scope, "ABC", 10000, "tester")
+        service.save_note(self.store, scope, first["trade_date"], "ABC", "Xóa ngày mua đầu", "tester")
+        service.save_note(self.store, scope, second["trade_date"], "ABC", "Giữ ngày mua sau", "tester")
+        service.save_note(self.store, other["scope"], other["trade_date"], "ABC", "Tài khoản khác", "tester")
+        before_other = service.build_report(self.store, other["scope"])
+        report = service.build_report(self.store, scope)
+        self.assertEqual(report["positions"][0]["quantity"], 150)
+        self.assertEqual(report["positions"][0]["average_cost"], 15000)
+        target = next(i for i in report["imports"] if i["trade_date"] == first["trade_date"])
+        result = service.delete_report(self.store, scope, target["id"], target["revision"])
+        self.assertEqual(result, dict(scope=scope, import_id=target["id"], trade_date=first["trade_date"],
+                                      deleted_imports_count=1, deleted_notes_count=1, deleted_bases_count=0))
+        report = service.build_report(self.store, scope)
+        self.assertEqual(report["positions"][0]["quantity"], 50)
+        self.assertEqual(report["positions"][0]["average_cost"], 20000)
+        self.assertEqual(report["positions"][0]["total_cost"], 1000000)
+        self.assertEqual(report["positions"][0]["base_quantity"], 10000)
+        self.assertEqual(report["rows"][1]["note"], "Giữ ngày mua sau")
+        after_other = service.build_report(self.store, other["scope"])
+        self.assertEqual({k: v for k, v in after_other.items() if k != "scopes"},
+                         {k: v for k, v in before_other.items() if k != "scopes"})
+        sale = next(i for i in report["imports"] if i["trade_date"] == "2026-01-07")
+        service.delete_report(self.store, scope, sale["id"], sale["revision"])
+        report = service.build_report(self.store, scope)
+        self.assertEqual(report["positions"][0]["quantity"], 100)
+        self.assertEqual(report["positions"][0]["total_cost"], 2000000)
+        self.assertEqual(report["positions"][0]["total_quantity"], 10100)
+
+    def test_last_report_delete_keeps_selectable_base_only_scope_and_reimport_restores_tracking(self):
+        _, parsed = self.add([buy(100, 20000)])
+        scope = parsed["scope"]
+        service.save_base(self.store, scope, "ABC", 10000, "tester")
+        service.save_base(self.store, scope, "XYZ", 0, "tester")
+        service.save_note(self.store, scope, parsed["trade_date"], "ABC", "Xóa cùng báo cáo", "tester")
+        original = service.build_report(self.store, scope)["imports"][0]
+        service.delete_report(self.store, scope, original["id"], original["revision"])
+        report = service.build_report(self.store, scope)
+        self.assertEqual(report["selected_scope"], scope)
+        self.assertEqual(report["scopes"][0], dict(scope=scope, account_label="Tài khoản · #" + scope[-6:],
+                                                  first_trade_date=None, last_trade_date=None, imports_count=0))
+        self.assertEqual(report["imports"], [])
+        self.assertEqual(report["rows"], [])
+        self.assertEqual(report["totals"]["total_quantity"], 10000)
+        self.assertRegex(report["revision"], r"^[a-f0-9]{64}$")
+        service.save_base(self.store, scope, "XYZ", 500, "tester")
+        self.assertEqual(service.build_report(self.store, scope)["totals"]["base_quantity"], 10500)
+        service.import_report(self.store, parsed, "tester")
+        report = service.build_report(self.store, scope)
+        self.assertNotEqual(report["imports"][0]["id"], original["id"])
+        self.assertNotEqual(report["imports"][0]["revision"], original["revision"])
+        self.assertEqual(report["positions"][0]["quantity"], 100)
+        self.assertEqual(report["positions"][0]["total_quantity"], 10100)
+        self.assertEqual(report["rows"][0]["note"], "")
+        self.assertEqual(report["scopes"][0]["account_label"], parsed["account_label"])
+
+    def test_last_report_without_bases_removes_scope_and_empty_report_has_no_revision(self):
+        _, parsed = self.add([buy()])
+        report = service.build_report(self.store, parsed["scope"])
+        target = report["imports"][0]
+        service.delete_report(self.store, parsed["scope"], target["id"], target["revision"])
+        report = service.build_report(self.store)
+        self.assertEqual(report["scopes"], [])
+        self.assertIsNone(report["selected_scope"])
+        self.assertIsNone(report["revision"])
+        self.assertEqual(report["positions"], [])
+        with self.assertRaises(ValueError):
+            service.build_report(self.store, parsed["scope"])
+
+    def test_clear_scope_deletes_imports_notes_bases_only_for_selected_account(self):
+        _, first = self.add([buy()])
+        self.add([sell()], day="06/01/2026")
+        _, other = self.add([buy(100, 20000)], account="OTHER0002")
+        scope = first["scope"]
+        service.save_note(self.store, scope, first["trade_date"], "ABC", "Mua", "tester")
+        service.save_note(self.store, scope, "2026-01-06", "ABC", "Bán", "tester")
+        service.save_base(self.store, scope, "ABC", 10000, "tester")
+        service.save_base(self.store, scope, "XYZ", 500, "tester")
+        service.save_note(self.store, other["scope"], other["trade_date"], "ABC", "Giữ", "tester")
+        service.save_base(self.store, other["scope"], "ABC", 20000, "tester")
+        other_before = service.build_report(self.store, other["scope"])
+        report = service.build_report(self.store, scope)
+        result = service.delete_scope(self.store, scope, report["revision"])
+        self.assertEqual(result, dict(scope=scope, deleted_imports_count=2, deleted_notes_count=2, deleted_bases_count=2))
+        self.assertEqual(service.build_report(self.store, other["scope"]), {
+            **other_before, "scopes": [s for s in other_before["scopes"] if s["scope"] == other["scope"]]})
+        with self.store.connect() as conn:
+            for table in ("reconciliation_imports", "reconciliation_notes", "reconciliation_bases"):
+                self.assertEqual(conn.execute(f"SELECT COUNT(*) FROM {table} WHERE scope=?", (scope,)).fetchone()[0], 0)
+            for table in ("ledger_entries", "ledger_closes", "nav_snapshots"):
+                self.assertEqual(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
+
+    def test_clear_base_only_scope_includes_orphan_notes_and_preserves_other_scopes(self):
+        _, first = self.add([buy()])
+        _, other = self.add([buy(100, 20000)], account="OTHER0001")
+        scope = first["scope"]
+        service.save_base(self.store, scope, "ABC", 10000, "tester")
+        report = service.build_report(self.store, scope)
+        target = report["imports"][0]
+        service.delete_report(self.store, scope, target["id"], target["revision"])
+        with self.store.connect() as conn:
+            conn.execute("INSERT INTO reconciliation_notes(scope,trade_date,ticker,note,updated_by,updated_at) VALUES(?,?,?,?,?,?)",
+                         (scope, first["trade_date"], "ABC", "Legacy orphan", "tester", "2026-01-05T00:00:00+00:00"))
+        report = service.build_report(self.store, scope)
+        result = service.delete_scope(self.store, scope, report["revision"])
+        self.assertEqual(result, dict(scope=scope, deleted_imports_count=0, deleted_notes_count=1, deleted_bases_count=1))
+        self.assertEqual(service.build_report(self.store)["selected_scope"], other["scope"])
+
+    def test_report_delete_rejects_replacement_and_note_edit_with_no_partial_deletion(self):
+        _, parsed = self.add([buy()])
+        scope = parsed["scope"]
+        original = service.build_report(self.store, scope)["imports"][0]
+        self.add([buy(200)], replace=True)
+        replaced = service.build_report(self.store, scope)
+        self.assertEqual(replaced["imports"][0]["id"], original["id"])
+        with self.assertRaises(service.ReconciliationConflict):
+            service.delete_report(self.store, scope, original["id"], original["revision"])
+        self.assertEqual(service.build_report(self.store, scope), replaced)
+        stale = replaced["imports"][0]
+        service.save_note(self.store, scope, parsed["trade_date"], "ABC", "New note", "tester")
+        current = service.build_report(self.store, scope)
+        with self.assertRaises(service.ReconciliationConflict):
+            service.delete_report(self.store, scope, stale["id"], stale["revision"])
+        self.assertEqual(service.build_report(self.store, scope), current)
+
+    def test_scope_delete_rejects_new_import_note_and_base_edits_atomically(self):
+        _, parsed = self.add([buy()])
+        scope = parsed["scope"]
+        changes = (
+            lambda: self.add([buy(100, 20000)], day="06/01/2026"),
+            lambda: service.save_note(self.store, scope, parsed["trade_date"], "ABC", "New note", "tester"),
+            lambda: service.save_base(self.store, scope, "ABC", 10000, "tester"),
+        )
+        for change in changes:
+            stale = service.build_report(self.store, scope)
+            change()
+            current = service.build_report(self.store, scope)
+            with self.assertRaises(service.ReconciliationConflict):
+                service.delete_scope(self.store, scope, stale["revision"])
+            self.assertEqual(service.build_report(self.store, scope), current)
+
+    def test_revisions_are_deterministic_and_include_same_content_audit_edits(self):
+        _, parsed = self.add([buy()])
+        scope = parsed["scope"]
+        with patch.object(service, "utc_now_iso", return_value="2026-01-05T00:00:00.000001+00:00"):
+            service.save_note(self.store, scope, parsed["trade_date"], "ABC", "Same note", "tester")
+            service.save_base(self.store, scope, "ABC", 10000, "tester")
+        original = service.build_report(self.store, scope)
+        self.assertEqual(service.build_report(self.store, scope), original)
+        for revision in (original["revision"], original["imports"][0]["revision"]):
+            self.assertRegex(revision, r"^[a-f0-9]{64}$")
+        with patch.object(service, "utc_now_iso", return_value="2026-01-05T00:00:00.000002+00:00"):
+            service.save_note(self.store, scope, parsed["trade_date"], "ABC", "Same note", "tester")
+        updated_note = service.build_report(self.store, scope)
+        self.assertNotEqual(updated_note["revision"], original["revision"])
+        self.assertNotEqual(updated_note["imports"][0]["revision"], original["imports"][0]["revision"])
+        with patch.object(service, "utc_now_iso", return_value="2026-01-05T00:00:00.000003+00:00"):
+            service.save_base(self.store, scope, "ABC", 10000, "tester")
+        updated_base = service.build_report(self.store, scope)
+        self.assertNotEqual(updated_base["revision"], updated_note["revision"])
+        self.assertEqual(updated_base["imports"][0]["revision"], updated_note["imports"][0]["revision"])
+
+    def test_missing_wrong_scope_and_invalid_revision_never_delete_anything(self):
+        _, first = self.add([buy()])
+        _, other = self.add([buy(100, 20000)], account="OTHER0001")
+        scope = first["scope"]
+        report = service.build_report(self.store, scope)
+        target = report["imports"][0]
+        for target_scope, target_id in ((scope, 999999), (other["scope"], target["id"])):
+            with self.assertRaises(service.ReconciliationNotFound):
+                service.delete_report(self.store, target_scope, target_id, target["revision"])
+        with self.assertRaises(service.ReconciliationNotFound):
+            service.delete_scope(self.store, "unknown", report["revision"])
+        for revision in (None, "", "a" * 63, "z" * 64):
+            with self.subTest(revision=revision), self.assertRaises(ValueError):
+                service.delete_report(self.store, scope, target["id"], revision)
+            with self.subTest(revision=revision), self.assertRaises(ValueError):
+                service.delete_scope(self.store, scope, revision)
+        self.assertEqual(service.build_report(self.store, scope), report)
+        service.delete_report(self.store, scope, target["id"], target["revision"])
+        with self.assertRaises(service.ReconciliationNotFound):
+            service.delete_report(self.store, scope, target["id"], target["revision"])
+
     def test_decimal_source_values_are_preserved_and_no_ledger_or_nav_writes(self):
         self.add([["Mua", "ABC", 3, "0.1", "0.3"], ["Bán", "ABC", 1, "0.2", "0.2"]])
         self.add([["Mua", "ABC", 3, "0.2", "0.6"]], day="06/01/2026")

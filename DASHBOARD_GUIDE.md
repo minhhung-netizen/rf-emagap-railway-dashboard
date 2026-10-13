@@ -1,6 +1,6 @@
 # Hướng dẫn RF + EMA Portfolio Gate Dashboard
 
-Cập nhật: 12/10/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
+Cập nhật: 13/10/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
 
 ## 1. Phạm vi và nguồn dữ liệu
 
@@ -234,7 +234,13 @@ Tồn mua, cơ sở và lịch sử được tách theo tài khoản/tiểu kho�
 
 Một tài khoản/tiểu khoản chỉ có một báo cáo cho mỗi ngày: upload lại dữ liệu giống nhau không cộng hai lần. Nếu báo cáo cùng ngày thay đổi, xem trước và chọn **thay thế** để xác nhận thay toàn bộ báo cáo ngày đó, rồi tính lại lũy kế; giữ ghi chú của các ngày/mã còn tồn tại. Vì vậy hãy dùng báo cáo đầy đủ của phiên, không nhập từng phần của cùng ngày. Dữ liệu lưu trong SQLite/Volume hiện có; Excel gốc không được lưu.
 
-Tài khoản `user` chỉ được xem khi admin cấp tính năng `tradeReconciliation` và không giới hạn chiến lược; chỉ admin được upload, thay thế, ghi chú và thiết lập cơ sở. API đọc `GET /api/trade-reconciliation?scope=...` trả `bases`, `positions`, `rows`, `totals` và phương pháp `daily_net_inventory_with_base`. Trường `quantity` của vị thế là lượng mua thêm còn lại; `base_quantity` là cơ sở; `total_quantity` là tổng hai phần. Xem trước/lưu dùng `POST /api/trade-reconciliation/preview` và `/import?replace_existing=true|false`, body là file nhị phân, header `X-Filename` chứa tên file đã URL-encode. Ghi chú dùng `PUT /api/trade-reconciliation/notes` với `{scope, trade_date, ticker, note}` (ngày ISO, ghi chú tối đa 2.000 ký tự); cơ sở dùng `PUT /api/trade-reconciliation/bases` với `{scope, ticker, base_quantity}` (số nguyên JSON). Các API cần session đăng nhập; dữ liệu lỗi trả `422`, quá dung lượng `413`, báo cáo trùng ngày khác dữ liệu chưa chọn thay thế trả `409`.
+**Xóa dữ liệu:** admin chọn đúng tài khoản, mở **Lịch sử báo cáo đã nhập** và bấm xóa trên báo cáo cần bỏ. Màn hình xác nhận nêu tài khoản, ngày và tên tệp; chỉ xóa khi bấm xác nhận. Xóa một báo cáo sẽ xóa cả ghi chú của ngày đó, giữ lượng cổ phiếu cơ sở và tính lại tồn mua/giá vốn từ các báo cáo còn lại theo thứ tự ngày. Vì vậy xóa ngày mua có thể giảm tồn, còn xóa ngày bán có thể tăng tồn được theo dõi. Nếu xóa báo cáo cuối cùng nhưng tài khoản vẫn có cấu hình cơ sở, tài khoản tiếp tục xuất hiện với nhãn mã định danh rút gọn và lượng cơ sở giữ riêng; vẫn có thể sửa cơ sở hoặc nhập báo cáo trở lại.
+
+Nút **xóa toàn bộ dữ liệu tài khoản** xóa tất cả báo cáo, ghi chú và cấu hình cơ sở của tài khoản/tiểu khoản đang chọn trong tab này, kể cả dữ liệu ngoài bộ lọc ngày/mã. Cần xác nhận riêng trước khi xóa. Các tài khoản khác giữ nguyên. Muốn lấy lại giao dịch đã xóa phải nhập lại Excel; ghi chú đã xóa cần nhập lại, và sau khi xóa toàn bộ cần thiết lập lại cơ sở. Việc xóa trong tab này không xóa tài khoản đăng nhập, Sổ giao dịch, NAV hoặc dữ liệu TradingView. Mẫu Excel và dữ liệu cũ không cần đổi cột hay chuyển đổi để sử dụng nút xóa.
+
+Tài khoản `user` chỉ được xem khi admin cấp tính năng `tradeReconciliation` và không giới hạn chiến lược; chỉ admin được upload, thay thế, ghi chú, thiết lập cơ sở và xóa dữ liệu. API đọc `GET /api/trade-reconciliation?scope=...` trả `bases`, `positions`, `rows`, `totals` và phương pháp `daily_net_inventory_with_base`. Trường `quantity` của vị thế là lượng mua thêm còn lại; `base_quantity` là cơ sở; `total_quantity` là tổng hai phần. Xem trước/lưu dùng `POST /api/trade-reconciliation/preview` và `/import?replace_existing=true|false`, body là file nhị phân, header `X-Filename` chứa tên file đã URL-encode. Ghi chú dùng `PUT /api/trade-reconciliation/notes` với `{scope, trade_date, ticker, note}` (ngày ISO, ghi chú tối đa 2.000 ký tự); cơ sở dùng `PUT /api/trade-reconciliation/bases` với `{scope, ticker, base_quantity}` (số nguyên JSON).
+
+Xóa một báo cáo dùng `DELETE /api/trade-reconciliation/imports/{id}?scope=...&expected_revision=...`, lấy `id` và `revision` của báo cáo trong `imports` từ API đọc. Xóa toàn bộ dùng `DELETE /api/trade-reconciliation/accounts/{scope}?expected_revision=...`, lấy `revision` cấp cao nhất của tài khoản từ cùng API. Revision là chuỗi SHA-256 64 ký tự; phải dùng phiên bản vừa đọc. Nếu dữ liệu cần xóa đã thay đổi trong lúc xác nhận, API trả `409` và giữ dữ liệu để admin tải lại, kiểm tra rồi xác nhận lại. Các API cần session đăng nhập; tài khoản chỉ xem không được xóa (`403`), đối tượng xóa không còn tồn tại trả `404`, dữ liệu lỗi trả `422`, quá dung lượng `413`, báo cáo trùng ngày khác dữ liệu chưa chọn thay thế trả `409`.
 
 Module này lưu thống kê riêng, không tự tạo bút toán Sổ giao dịch, sửa NAV hoặc mở/đóng vị thế Gate từ TradingView.
 
@@ -274,6 +280,7 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
+| 13/10/2026 | Thêm xóa từng báo cáo và xóa toàn bộ dữ liệu đối chiếu của tài khoản cho admin, có xác nhận và kiểm tra phiên bản để tránh xóa dữ liệu vừa thay đổi. Xóa từng ngày giữ cơ sở, xóa ghi chú ngày đó và tính lại lũy kế; xóa toàn bộ gồm cả cơ sở. |
 | 12/10/2026 | Thêm Đối chiếu khớp lệnh: xem trước/import Excel TCBS theo tài khoản và ngày, chống cộng trùng, thay thế báo cáo, ghi chú; trừ lượng bán chênh lệch vào tồn mua trước đó, giữ giá vốn bình quân khi bán một phần. Thiết lập cổ phiếu cơ sở đã có sẵn theo tài khoản/mã, giữ riêng cơ sở và chỉ tính giá vốn cho phần mua thêm; báo cáo cũ tự được tính lại. |
 | 11/10/2026 | Tín hiệu sớm giữ nguyên khi RF/EMA mở, xác nhận hoặc đóng vị thế; chỉ ẩn khi hết hạn/đổi chiều cùng mã, chỉ báo và khung. Tách hiệu lực khỏi liên hệ lịch sử với lệnh mua; thêm ngành trong API, lọc ngành và loại tín hiệu hiện có, sắp xếp theo cột, mở rộng vùng bảng và nút xóa từng tín hiệu cho admin. |
 | 03/10/2026 | Đưa toàn bộ chỉ số và bảng rebalance RF Stock MTF lên trên EMA Gap Daily trong tab RF + EMA Monitor. |

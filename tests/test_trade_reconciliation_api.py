@@ -73,13 +73,24 @@ class TradeReconciliationAPITest(unittest.TestCase):
             headers={"Content-Type": "application/octet-stream", "X-Filename": quote(filename)},
         )
 
-    def report(self):
-        response = self.client.get(BASE)
+    def report(self, scope=None):
+        response = self.client.get(BASE, params={"scope": scope} if scope else {})
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
 
     def set_base(self, scope, *, ticker="ABC", quantity=10000):
         return self.client.put(f"{BASE}/bases", json={"scope": scope, "ticker": ticker, "base_quantity": quantity})
+
+    def delete_import(self, scope, imported):
+        return self.client.delete(f"{BASE}/imports/{imported['id']}", params={"scope": scope, "expected_revision": imported["revision"]})
+
+    def delete_account(self, scope, revision):
+        return self.client.delete(f"{BASE}/accounts/{scope}", params={"expected_revision": revision})
+
+    def reconciliation_snapshot(self):
+        with self.store.connect() as connection:
+            return {table: [dict(row) for row in connection.execute(f"SELECT * FROM {table} ORDER BY 1,2")]
+                    for table in ("reconciliation_imports", "reconciliation_notes", "reconciliation_bases")}
 
     @staticmethod
     def calculated(report):
@@ -356,6 +367,201 @@ class TradeReconciliationAPITest(unittest.TestCase):
         response = self.client.post(f"{BASE}/preview", content=b"", headers={"Content-Length": "50000001", "X-Filename": "file.xlsx"})
         self.assertEqual(response.status_code, 413, response.text)
         self.assertEqual(self.calculated(self.report()), before)
+
+    def test_delete_import_removes_only_its_notes_preserves_base_and_replays_later_sales(self):
+        for day, buys, sells, price in (("05/01/2026", 100, 0, 10000), ("06/01/2026", 100, 0, 20000), ("07/01/2026", 0, 50, 10000)):
+            response = self.upload("import", workbook(day, buys=buys, sells=sells, price=price))
+            self.assertEqual(response.status_code, 200, response.text)
+        scope = self.report()["selected_scope"]
+        self.assertEqual(self.set_base(scope).status_code, 200)
+        for day in ("2026-01-05", "2026-01-06"):
+            response = self.client.put(f"{BASE}/notes", json={"scope": scope, "trade_date": day, "ticker": "ABC", "note": f"Theo dõi {day}"})
+            self.assertEqual(response.status_code, 200, response.text)
+        before = self.report(scope)
+        self.assertEqual(before["positions"][0]["quantity"], 150)
+        self.assertEqual(before["positions"][0]["average_cost"], 15000)
+        imported = next(item for item in before["imports"] if item["trade_date"] == "2026-01-06")
+        self.assertRegex(imported["revision"], r"^[0-9a-f]{64}$")
+        response = self.delete_import(scope, imported)
+        self.assertEqual(response.status_code, 200, response.text)
+        after = self.report(scope)
+        self.assertEqual(len(after["imports"]), 2)
+        self.assertEqual({row["trade_date"] for row in after["rows"]}, {"2026-01-05", "2026-01-07"})
+        self.assertEqual(after["bases"], before["bases"])
+        position = after["positions"][0]
+        self.assertEqual(position["quantity"], 50)
+        self.assertEqual(position["base_quantity"], 10000)
+        self.assertEqual(position["total_quantity"], 10050)
+        self.assertEqual(position["average_cost"], 10000)
+        self.assertEqual(position["total_cost"], 500000)
+        notes = self.reconciliation_snapshot()["reconciliation_notes"]
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["trade_date"], "2026-01-05")
+        self.assertEqual(self.store.list_all_signals(), [])
+        self.assertEqual(self.store.list_nav_snapshots(), [])
+        with self.store.connect() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM ledger_entries").fetchone()[0], 0)
+
+    def test_delete_last_import_preserves_a_readable_base_only_account(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        self.assertEqual(self.set_base(scope).status_code, 200)
+        before = self.report(scope)
+        response = self.delete_import(scope, before["imports"][0])
+        self.assertEqual(response.status_code, 200, response.text)
+        after = self.report(scope)
+        self.assertEqual(after["imports"], [])
+        self.assertEqual(after["rows"], [])
+        self.assertEqual(after["bases"], before["bases"])
+        self.assertEqual(after["selected_scope"], scope)
+        position = after["positions"][0]
+        self.assertEqual(position["status"], "base_only")
+        self.assertEqual(position["quantity"], 0)
+        self.assertEqual(position["total_quantity"], 10000)
+        self.assertIsNone(position["average_cost"])
+        # The retained account can still be explicitly cleared later.
+        response = self.delete_account(scope, after["revision"])
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.report()["scopes"], [])
+
+    def test_delete_account_clears_only_that_scope_then_reimport_has_no_old_notes_or_base(self):
+        self.assertEqual(self.upload("import", workbook(sells=0)).status_code, 200)
+        scope = self.report()["selected_scope"]
+        self.assertEqual(self.set_base(scope).status_code, 200)
+        self.assertEqual(self.set_base(scope, ticker="CII", quantity=5000).status_code, 200)
+        note = {"scope": scope, "trade_date": "2026-01-05", "ticker": "ABC", "note": "Ghi chú tài khoản cần xóa"}
+        self.assertEqual(self.client.put(f"{BASE}/notes", json=note).status_code, 200)
+        self.assertEqual(self.upload("import", workbook("06/01/2026", sells=0)).status_code, 200)
+        self.assertEqual(self.upload("import", workbook(account="OTHER0001", sells=0, price=20000)).status_code, 200)
+        second_scope = next(item["scope"] for item in self.report()["scopes"] if item["scope"] != scope)
+        self.assertEqual(self.set_base(second_scope, quantity=20000).status_code, 200)
+        self.assertEqual(self.client.put(f"{BASE}/notes", json={**note, "scope": second_scope, "note": "Ghi chú được giữ"}).status_code, 200)
+        unaffected = self.report(second_scope)
+        before_snapshot = self.reconciliation_snapshot()
+        revision = self.report(scope)["revision"]
+        self.assertRegex(revision, r"^[0-9a-f]{64}$")
+        response = self.delete_account(scope, revision)
+        self.assertEqual(response.status_code, 200, response.text)
+        after_snapshot = self.reconciliation_snapshot()
+        for table in before_snapshot:
+            self.assertEqual(after_snapshot[table], [row for row in before_snapshot[table] if row["scope"] != scope])
+        after = self.report(second_scope)
+        # Selector labels lose their hash suffix once the colliding account is
+        # gone; quantities/costs and the persisted account contents stay intact.
+        for key in ("rows", "positions"):
+            self.assertEqual([{field: value for field, value in row.items() if field != "account_label"} for row in after[key]],
+                             [{field: value for field, value in row.items() if field != "account_label"} for row in unaffected[key]])
+        self.assertEqual(after["totals"], unaffected["totals"])
+        self.assertEqual(after["bases"], unaffected["bases"])
+        self.assertEqual(after["revision"], unaffected["revision"])
+        self.assertEqual([item["scope"] for item in after["scopes"]], [second_scope])
+        self.assertEqual(self.upload("import", workbook()).status_code, 200)
+        restarted = self.report(scope)
+        self.assertEqual(restarted["bases"], [])
+        self.assertEqual(restarted["rows"][0]["note"], "")
+        self.assertEqual(restarted["positions"][0]["quantity"], 50)
+        self.assertEqual(restarted["positions"][0]["base_quantity"], 0)
+
+    def test_delete_missing_and_cross_scope_imports_return_404_without_changes(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        imported = self.report(scope)["imports"][0]
+        self.assertEqual(self.upload("import", workbook(account="OTHER0001")).status_code, 200)
+        second_scope = next(item["scope"] for item in self.report()["scopes"] if item["scope"] != scope)
+        before = self.reconciliation_snapshot()
+        for target_scope, target_id in ((scope, imported["id"] + 1000), (second_scope, imported["id"]), ("acct_missing", imported["id"])):
+            with self.subTest(scope=target_scope, import_id=target_id):
+                response = self.client.delete(f"{BASE}/imports/{target_id}", params={"scope": target_scope, "expected_revision": imported["revision"]})
+                self.assertEqual(response.status_code, 404, response.text)
+                self.assertEqual(self.reconciliation_snapshot(), before)
+        response = self.delete_account("acct_missing", "0" * 64)
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(self.reconciliation_snapshot(), before)
+        self.assertEqual(self.delete_import(scope, imported).status_code, 200)
+        after = self.reconciliation_snapshot()
+        response = self.delete_import(scope, imported)
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(self.reconciliation_snapshot(), after)
+
+    def test_stale_import_revision_blocks_replacement_and_note_changes_even_with_same_id(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        imported = self.report(scope)["imports"][0]
+        replacement = self.upload("import", workbook(buys=200), replace=True)
+        self.assertEqual(replacement.status_code, 200, replacement.text)
+        replaced = self.report(scope)["imports"][0]
+        self.assertEqual(replaced["id"], imported["id"])
+        self.assertNotEqual(replaced["revision"], imported["revision"])
+        before = self.reconciliation_snapshot()
+        response = self.delete_import(scope, imported)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(self.reconciliation_snapshot(), before)
+        note = {"scope": scope, "trade_date": "2026-01-05", "ticker": "ABC", "note": "Mới cập nhật sau khi mở hộp xác nhận"}
+        self.assertEqual(self.client.put(f"{BASE}/notes", json=note).status_code, 200)
+        before = self.reconciliation_snapshot()
+        response = self.delete_import(scope, replaced)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(self.reconciliation_snapshot(), before)
+        current = self.report(scope)["imports"][0]
+        self.assertEqual(self.delete_import(scope, current).status_code, 200)
+
+    def test_stale_account_revision_covers_new_imports_base_and_note_changes(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        for change in ("import", "base", "note"):
+            with self.subTest(change=change):
+                revision = self.report(scope)["revision"]
+                if change == "import":
+                    changed = self.upload("import", workbook("06/01/2026"))
+                elif change == "base":
+                    changed = self.set_base(scope)
+                else:
+                    changed = self.client.put(f"{BASE}/notes", json={"scope": scope, "trade_date": "2026-01-05", "ticker": "ABC", "note": "Cập nhật mới"})
+                self.assertEqual(changed.status_code, 200, changed.text)
+                self.assertNotEqual(self.report(scope)["revision"], revision)
+                before = self.reconciliation_snapshot()
+                response = self.delete_account(scope, revision)
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertEqual(self.reconciliation_snapshot(), before)
+
+    def test_delete_requires_valid_scope_positive_id_and_revision_without_side_effects(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        imported = self.report(scope)["imports"][0]
+        before = self.reconciliation_snapshot()
+        requests = [(f"{BASE}/imports/{imported['id']}", {"scope": scope}),
+                    (f"{BASE}/imports/{imported['id']}", {"expected_revision": imported["revision"]}),
+                    (f"{BASE}/imports/{imported['id']}", {"scope": "", "expected_revision": imported["revision"]}),
+                    (f"{BASE}/imports/{imported['id']}", {"scope": "x" * 65, "expected_revision": imported["revision"]}),
+                    (f"{BASE}/accounts/{scope}", {}),
+                    (f"{BASE}/accounts/{'x' * 65}", {"expected_revision": imported["revision"]})]
+        for revision in ("", "0" * 63, "0" * 65, "z" * 64):
+            requests.extend([(f"{BASE}/imports/{imported['id']}", {"scope": scope, "expected_revision": revision}),
+                             (f"{BASE}/accounts/{scope}", {"expected_revision": revision})])
+        for import_id in (0, -1, "not-an-id"):
+            requests.append((f"{BASE}/imports/{import_id}", {"scope": scope, "expected_revision": imported["revision"]}))
+        for path, params in requests:
+            with self.subTest(path=path, params=params):
+                response = self.client.delete(path, params=params)
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(self.reconciliation_snapshot(), before)
+
+    def test_delete_endpoints_require_admin_for_anonymous_and_all_viewer_accounts(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        report = self.report(scope)
+        imported = report["imports"][0]
+        before = self.reconciliation_snapshot()
+        self.client.cookies.clear()
+        self.assertEqual(self.delete_import(scope, imported).status_code, 401)
+        self.assertEqual(self.delete_account(scope, report["revision"]).status_code, 401)
+        self.assertEqual(self.reconciliation_snapshot(), before)
+        for features, strategies in (([], []), (["tradeReconciliation"], []), (["tradeReconciliation"], ["RF"])):
+            with self.subTest(features=features, strategies=strategies):
+                self.authenticate("user", features=features, strategies=strategies)
+                self.assertEqual(self.delete_import(scope, imported).status_code, 403)
+                self.assertEqual(self.delete_account(scope, report["revision"]).status_code, 403)
+                self.assertEqual(self.reconciliation_snapshot(), before)
 
 
 if __name__ == "__main__":
