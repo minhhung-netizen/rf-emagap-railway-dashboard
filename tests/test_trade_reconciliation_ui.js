@@ -18,16 +18,20 @@ const pending = [];
 const context = vm.createContext({document:{querySelector:() => panel, activeElement:null},window:{},
   fetch:(url, options) => new Promise(resolve => pending.push({url, options, resolve})),
 });
-vm.runInContext(source.replace('window.TradeReconciliation = {clear, refresh};', 'window.TradeReconciliation = {clear, refresh, test:{filteredRows,date,table,state:()=>({selectedFile,preview,report,identity,selectedScope,busy,pendingDelete,draftKeys:[...drafts.keys()]})}};'), context);
+vm.runInContext(source.replace('window.TradeReconciliation = {clear, refresh};', 'window.TradeReconciliation = {clear, refresh, test:{filteredRows,date,table,state:()=>({selectedFile,preview,report,identity,selectedScope,busy,pendingDelete,feeDirty,plan,planBusy,draftKeys:[...drafts.keys()]})}};'), context);
 const moduleApi = context.window.TradeReconciliation;
 const sample = (ticker, scope = 'scope-one') => ({scopes:[{scope,account_label:'***01',first_trade_date:'2026-10-01',last_trade_date:'2026-10-02'}],selected_scope:scope,
   rows:[{scope,ticker,trade_date:'2026-10-02',buy_quantity:100,sell_quantity:50,matched_quantity:50,residual_buy_quantity:50,tracked_sell_quantity:0,ignored_sell_quantity:0,buy_average_price:25000,base_quantity:10000,opening_quantity:100,closing_quantity:150,opening_total_quantity:10100,closing_total_quantity:10150,closing_average_cost:23000,status:'buy_remaining',note:''}],
   positions:[{scope,ticker,quantity:150,base_quantity:10000,total_quantity:10150,average_cost:23000,total_cost:3450000,first_trade_date:'2026-10-01',last_trade_date:'2026-10-02',status:'buy_remaining'}],
-  bases:[{scope,ticker,base_quantity:10000}],revision:'account-r1',imports:[{id:41,trade_date:'2026-10-02',filename:'report.xlsx',revision:'report-r1',rows_count:1,created_by:'admin'}],
+  bases:[{scope,ticker,base_quantity:10000}],fees:{scope,buy_fee_percent:0,sell_fee_percent:0,sell_tax_percent:0,configured:false},revision:'account-r1',imports:[{id:41,trade_date:'2026-10-02',filename:'report.xlsx',revision:'report-r1',rows_count:1,created_by:'admin'}],
   totals:{imports_count:2,outstanding_tickers:1,outstanding_quantity:150,total_cost:3450000,base_quantity:10000,total_quantity:10150,ignored_sell_quantity:0}});
 const resolve = (request, body) => request.resolve({ok:true,status:200,json:async()=>body});
 const tick = () => new Promise(setImmediate);
 const submitBase = () => get('[data-base-form]').listeners.get('submit')({preventDefault(){}});
+const submitFees = () => get('[data-fee-form]').listeners.get('submit')({preventDefault(){}});
+const submitPlan = () => get('[data-plan-form]').listeners.get('submit')({preventDefault(){}});
+const planResponse = (data, parts = 3) => ({scope:data.selected_scope,ticker:data.positions[0].ticker,quantity:data.positions[0].quantity,average_cost:data.positions[0].average_cost,total_cost:data.positions[0].total_cost,fees:data.fees,revision:data.revision,price_step:100,price_min:24200,price_max:24200,target_profit_percent:5,upper_profit_percent:5,
+  orders:Array.from({length:parts},(_,i)=>({part:i+1,quantity:50,target_profit_percent:5,price:24200,allocated_cost:1150000,gross_proceeds:1210000,sell_fee:0,sell_tax:0,net_proceeds:1210000,net_profit:60000,net_profit_percent:5.217391})),totals:{quantity:150,net_proceeds:3630000,net_profit:180000,net_profit_percent:5.217391}});
 const clickDeleteImport = id => {
   const trigger = element();trigger.dataset = {deleteImport:String(id)};trigger.isConnected = true;
   elements.set('[data-delete-import]',trigger);
@@ -69,6 +73,9 @@ const emptyReport = () => ({scopes:[],selected_scope:null,rows:[],positions:[],b
   assert.doesNotMatch(get('[data-imports]').innerHTML, /data-delete-import/);
   assert.match(panel.innerHTML, /data-delete-account-area hidden/);
   assert.equal(get('[data-delete-account]').disabled, true);
+  assert.match(panel.innerHTML, /data-fee-admin hidden/);
+  assert.equal(get('[data-fee-save]').disabled, true);
+  await submitFees();assert.equal(pending.length, 0);
   clickDeleteImport(41);clickDeleteAccount();await clickConfirmDelete();
   assert.equal(pending.length, 0, 'Read-only viewers cannot open or confirm delete actions');
   assert.doesNotMatch(get('[data-rows]').innerHTML, /data-note-save|textarea/);
@@ -296,6 +303,84 @@ const emptyReport = () => ({scopes:[],selected_scope:null,rows:[],positions:[],b
   assert.equal(panel.innerHTML, '');assert.equal(panel.hidden, true);
   const afterMalformedAuth = moduleApi.refresh({id:5,role:'admin'});resolve(pending.shift(),changed);await afterMalformedAuth;
 
+  // Planning is read-only and accessible to viewers; it submits the whole surplus and explicit rounding settings.
+  const planReport = sample('CII');
+  const plannerViewer = moduleApi.refresh({id:7,role:'user',features:['tradeReconciliation']});resolve(pending.shift(),planReport);await plannerViewer;
+  assert.match(get('[data-fee-summary]').textContent, /Chưa cấu hình phí/);
+  assert.equal(get('[data-plan-parts]').value, '3');assert.equal(get('[data-plan-target]').value, '5');
+  const viewerPlanTask = submitPlan(), viewerPlanRequest = pending.shift();
+  assert.equal(viewerPlanRequest.url, '/api/trade-reconciliation/sell-plan?scope=scope-one&ticker=CII&parts=3&target_profit_percent=5&price_step=100');
+  assert.equal(viewerPlanRequest.options.method, undefined);
+  resolve(viewerPlanRequest,planResponse(planReport));await viewerPlanTask;
+  assert.match(get('[data-plan-result]').innerHTML, /150 CP dư mua/);
+  assert.match(get('[data-plan-result]').innerHTML, /Thu về ròng|Lãi ròng/);
+  assert.match(get('[data-plan-result]').innerHTML, /Phần 3/);
+  assert.match(get('[data-plan-result]').innerHTML, /5,217391%/);
+  const viewerPoll = moduleApi.refresh({id:7,role:'user',features:['tradeReconciliation']});resolve(pending.shift(),planReport);await viewerPoll;
+  assert.notEqual(moduleApi.test.state().plan, null, 'Unchanged polling keeps a valid plan');
+  const firstPlanHtml = get('[data-plan-result]').innerHTML;
+  const identicalPlanTask = submitPlan();assert.equal(get('[data-plan-result]').innerHTML, '');
+  resolve(pending.shift(),planResponse(planReport));await identicalPlanTask;
+  assert.equal(get('[data-plan-result]').innerHTML, firstPlanHtml, 'Recalculating identical inputs restores the table after its loading clear');
+  const afterRepeatPoll = moduleApi.refresh({id:7,role:'user',features:['tradeReconciliation']});resolve(pending.shift(),planReport);await afterRepeatPoll;
+  assert.equal(get('[data-plan-result]').innerHTML, firstPlanHtml, 'Unchanged polling preserves the rendered result after an identical calculation');
+  assert.notEqual(moduleApi.test.state().plan, null);
+  get('[data-plan-upper]').value = '9';get('[data-plan-upper]').listeners.get('input')();
+  assert.equal(get('[data-plan-result]').innerHTML, '');
+  const upperPlan = submitPlan(), upperRequest = pending.shift();assert.match(upperRequest.url, /upper_profit_percent=9/);
+  const newerReport = sample('CII');newerReport.revision = 'account-r2';
+  const newerPoll = moduleApi.refresh({id:7,role:'user',features:['tradeReconciliation']});resolve(pending.shift(),newerReport);await newerPoll;
+  resolve(upperRequest,planResponse(planReport));await upperPlan;
+  assert.equal(moduleApi.test.state().plan, null, 'Changed polling revisions discard an in-flight stale plan');
+  assert.equal(get('[data-plan-upper]').value, '9', 'Polling must preserve target drafts');
+  const switchedPlan = submitPlan(), oldScopePlan = pending.shift();
+  get('[data-scope]').listeners.get('change')({target:{value:'scope-two'}});
+  resolve(pending.shift(),sample('FPT','scope-two'));await tick();
+  resolve(oldScopePlan,planResponse(newerReport));await switchedPlan;
+  assert.equal(moduleApi.test.state().plan, null);
+  assert.equal(get('[data-plan-ticker]').value, 'FPT');assert.equal(get('[data-plan-upper]').value, '');
+  const removedTicker = sample('OTHER','scope-two');removedTicker.revision = 'account-r3';
+  const removedPoll = moduleApi.refresh({id:7,role:'user',features:['tradeReconciliation']});resolve(pending.shift(),removedTicker);await removedPoll;
+  assert.equal(get('[data-plan-ticker]').value, 'FPT', 'A sold-out ticker is not silently replaced by another ticker');
+  assert.equal(get('[data-plan-calculate]').disabled, true);
+
+  // Account fee drafts survive polling; only admins save them, and new costs/plans use the saved fee configuration.
+  const feeAdmin = moduleApi.refresh({id:5,role:'admin'});resolve(pending.shift(),planReport);await feeAdmin;
+  get('[data-buy-fee]').value = '0.15';get('[data-buy-fee]').listeners.get('input')();
+  get('[data-sell-fee]').value = '0.2';get('[data-sell-tax]').value = '0.1';
+  const feePoll = moduleApi.refresh({id:5,role:'admin'});resolve(pending.shift(),planReport);await feePoll;
+  assert.equal(get('[data-buy-fee]').value, '0.15');assert.equal(moduleApi.test.state().feeDirty, true);
+  await submitPlan();assert.equal(pending.length, 0, 'An unsaved fee draft cannot be confused with saved planner fees');
+  get('[data-sell-fee]').value = '99.999999';get('[data-sell-tax]').value = '0.000001';await submitFees();assert.equal(pending.length, 0);
+  get('[data-sell-fee]').value = '0.2';get('[data-sell-tax]').value = '0.1';get('[data-buy-fee]').value = '0.1234567';await submitFees();assert.equal(pending.length, 0);
+  get('[data-buy-fee]').value = '0.15';
+  const feesTask = submitFees(), feesRequest = pending.shift();
+  assert.equal(feesRequest.url, '/api/trade-reconciliation/fees');assert.equal(feesRequest.options.method, 'PUT');
+  assert.deepEqual(JSON.parse(feesRequest.options.body), {scope:'scope-one',buy_fee_percent:0.15,sell_fee_percent:0.2,sell_tax_percent:0.1});
+  assert.equal(get('[data-scope]').disabled, true);assert.equal(get('[data-buy-fee]').disabled, true);
+  resolve(feesRequest,{saved:true});await tick();
+  const savedFeesReport = sample('CII');savedFeesReport.revision = 'account-fees-r2';
+  Object.assign(savedFeesReport.fees,{configured:true,buy_fee_percent:0.15,sell_fee_percent:0.2,sell_tax_percent:0.1});
+  Object.assign(savedFeesReport.positions[0],{average_cost:23034.5,total_cost:3455175});
+  assert.equal(pending[0].url, '/api/trade-reconciliation');resolve(pending.shift(),savedFeesReport);await feesTask;
+  assert.equal(moduleApi.test.state().feeDirty, false);assert.match(get('[data-fee-summary]').textContent, /mua 0,15%/);
+  assert.equal(get('[data-plan-status]').textContent, 'Dữ liệu đã cập nhật. Tính lại kế hoạch bán.');
+  assert.match(get('[data-positions]').innerHTML, /23\.034,5/);
+  get('[data-plan-parts]').value = '151';await submitPlan();assert.equal(pending.length, 0);
+  get('[data-plan-parts]').value = '3';get('[data-plan-upper]').value = '4';await submitPlan();assert.equal(pending.length, 0);
+  get('[data-plan-upper]').value = '';get('[data-plan-step]').value = '0';await submitPlan();assert.equal(pending.length, 0);
+  get('[data-plan-step]').value = '100';
+  const freshPlanTask = submitPlan();resolve(pending.shift(),planResponse(savedFeesReport));await freshPlanTask;
+  assert.match(get('[data-plan-result]').innerHTML, /23\.034,5 VND\/CP/);
+  assert.match(get('[data-plan-result]').innerHTML, /Phí mua 0,15%/);
+  clickDeleteAccount();await submitFees();await submitPlan();assert.equal(pending.length, 0, 'Delete confirmation blocks fee writes and new plans');
+  get('[data-delete-cancel]').listeners.get('click')();
+  const feeOnly = sample('CII');feeOnly.rows = [];feeOnly.positions = [];feeOnly.bases = [];feeOnly.imports = [];feeOnly.fees.configured = true;
+  feeOnly.scopes[0].first_trade_date = null;feeOnly.scopes[0].last_trade_date = null;
+  const feeOnlyLoad = moduleApi.refresh({id:5,role:'admin'});resolve(pending.shift(),feeOnly);await feeOnlyLoad;
+  assert.equal(get('[data-delete-account]').disabled, false, 'A fee-only account can still be completely deleted');
+  assert.match(get('[data-scope-context]').textContent, /chỉ còn cấu hình phí/);
+
   // A deletion finishing after logout must not render old data or issue a report request.
   clickDeleteAccount();const logoutDeleteTask = clickConfirmDelete(), logoutDeleteRequest = pending.shift();
   moduleApi.clear();resolve(logoutDeleteRequest,{deleted_imports_count:1});await logoutDeleteTask;
@@ -309,5 +394,5 @@ const emptyReport = () => ({scopes:[],selected_scope:null,rows:[],positions:[],b
   assert.equal(moduleApi.test.filteredRows(rows, {ticker:'FPT',from:'2026-10-03',to:''}).length, 0);
   assert.match(moduleApi.test.table([{label:'<img>'}],[], '<script>', 'Caption'), /&lt;img&gt;|&lt;script&gt;/);
   assert.doesNotMatch(moduleApi.test.table([{label:'<img>'}],[], '<script>', 'Caption'), /<img>|<script>/);
-  console.log('Trade reconciliation UI: async isolation, bases, sales, previews, explicit deletes, revisions, scopes and draft retention passed.');
+  console.log('Trade reconciliation UI: async isolation, fees, net-profit plans, bases, sales, deletes, revisions and draft retention passed.');
 })().catch(error => {console.error(error);process.exitCode = 1;});

@@ -1,6 +1,7 @@
 import io
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import quote
 from unittest.mock import patch
@@ -81,6 +82,13 @@ class TradeReconciliationAPITest(unittest.TestCase):
     def set_base(self, scope, *, ticker="ABC", quantity=10000):
         return self.client.put(f"{BASE}/bases", json={"scope": scope, "ticker": ticker, "base_quantity": quantity})
 
+    def set_fees(self, scope, *, buy="0.15", sell="0.15", tax="0.10"):
+        return self.client.put(f"{BASE}/fees", json={"scope": scope, "buy_fee_percent": buy,
+                                                   "sell_fee_percent": sell, "sell_tax_percent": tax})
+
+    def sell_plan(self, scope, **options):
+        return self.client.get(f"{BASE}/sell-plan", params={"scope": scope, "ticker": "ABC", **options})
+
     def delete_import(self, scope, imported):
         return self.client.delete(f"{BASE}/imports/{imported['id']}", params={"scope": scope, "expected_revision": imported["revision"]})
 
@@ -90,7 +98,7 @@ class TradeReconciliationAPITest(unittest.TestCase):
     def reconciliation_snapshot(self):
         with self.store.connect() as connection:
             return {table: [dict(row) for row in connection.execute(f"SELECT * FROM {table} ORDER BY 1,2")]
-                    for table in ("reconciliation_imports", "reconciliation_notes", "reconciliation_bases")}
+                    for table in ("reconciliation_imports", "reconciliation_notes", "reconciliation_bases", "reconciliation_fees")}
 
     @staticmethod
     def calculated(report):
@@ -562,6 +570,196 @@ class TradeReconciliationAPITest(unittest.TestCase):
                 self.assertEqual(self.delete_import(scope, imported).status_code, 403)
                 self.assertEqual(self.delete_account(scope, report["revision"]).status_code, 403)
                 self.assertEqual(self.reconciliation_snapshot(), before)
+
+    def test_buy_fees_replay_existing_daily_residuals_without_changing_excel_digest(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        before = self.report(scope)
+        self.assertEqual(Decimal(str(before["fees"]["buy_fee_percent"])), Decimal(0))
+        self.assertFalse(before["fees"]["configured"])
+        imports_before = self.reconciliation_snapshot()["reconciliation_imports"]
+        response = self.set_fees(scope)
+        self.assertEqual(response.status_code, 200, response.text)
+        after = self.report(scope)
+        self.assertTrue(after["fees"]["configured"])
+        self.assertEqual(Decimal(str(after["fees"]["buy_fee_percent"])), Decimal("0.15"))
+        self.assertEqual(after["positions"][0]["quantity"], 50)
+        self.assertEqual(after["positions"][0]["total_cost"], 500750)
+        self.assertEqual(after["positions"][0]["average_cost"], 10015)
+        # Source values retain the broker's pre-fee amount and price.
+        self.assertEqual(after["rows"][0]["buy_amount"], 1000000)
+        self.assertEqual(after["rows"][0]["buy_average_price"], 10000)
+        self.assertEqual(self.reconciliation_snapshot()["reconciliation_imports"], imports_before)
+        duplicate = self.upload("import")
+        self.assertEqual(duplicate.status_code, 200, duplicate.text)
+        self.assertTrue(duplicate.json()["duplicate"])
+        self.assertEqual(self.calculated(self.report(scope)), self.calculated(after))
+
+    def test_fee_inclusive_average_survives_partial_sale_and_resets_on_full_close(self):
+        self.assertEqual(self.upload("import", workbook(buys=100, sells=0)).status_code, 200)
+        scope = self.report()["selected_scope"]
+        self.assertEqual(self.set_fees(scope, buy="0.2", sell="0.7", tax="0.3").status_code, 200)
+        self.assertEqual(self.upload("import", workbook("06/01/2026", buys=100, sells=0, price=20000)).status_code, 200)
+        self.assertEqual(self.upload("import", workbook("07/01/2026", buys=0, sells=50)).status_code, 200)
+        position = self.report(scope)["positions"][0]
+        self.assertEqual(position["quantity"], 150)
+        self.assertEqual(position["average_cost"], 15030)
+        self.assertEqual(position["total_cost"], 2254500)
+        self.assertEqual(self.upload("import", workbook("08/01/2026", buys=0, sells=150)).status_code, 200)
+        self.assertIsNone(self.report(scope)["positions"][0]["average_cost"])
+        self.assertEqual(self.upload("import", workbook("09/01/2026", buys=10, sells=0, price=30000)).status_code, 200)
+        self.assertEqual(self.report(scope)["positions"][0]["average_cost"], 30060)
+
+    def test_fee_settings_are_account_specific_and_persist_after_store_reopen(self):
+        self.assertEqual(self.upload("import", workbook(sells=0)).status_code, 200)
+        first = self.report()["selected_scope"]
+        self.assertEqual(self.set_fees(first, buy="0.2").status_code, 200)
+        imported = self.upload("import", workbook(account="OTHER0001", sells=0))
+        self.assertEqual(imported.status_code, 200, imported.text)
+        second = imported.json()["scope"]
+        other = self.report(second)
+        self.assertFalse(other["fees"]["configured"])
+        self.assertEqual(other["positions"][0]["average_cost"], 10000)
+        reopened = SignalStore(self.database_path)
+        with patch.object(main, "store", reopened):
+            report = self.report(first)
+        self.assertEqual(Decimal(str(report["fees"]["buy_fee_percent"])), Decimal("0.2"))
+        self.assertEqual(report["positions"][0]["average_cost"], 10020)
+
+    def test_fee_validation_and_authorization_reject_changes_atomically(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        self.assertEqual(self.set_fees(scope).status_code, 200)
+        before = self.reconciliation_snapshot()
+        cases = ({"buy": -1}, {"buy": True}, {"buy": "NaN"}, {"buy": "Infinity"},
+                 {"sell": 100}, {"tax": 100}, {"buy": "0.1234567"}, {"sell": 60, "tax": 40})
+        for values in cases:
+            with self.subTest(values=values):
+                response = self.set_fees(scope, **values)
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(self.reconciliation_snapshot(), before)
+        unknown = self.set_fees("acct_missing")
+        self.assertEqual(unknown.status_code, 422, unknown.text)
+        self.client.cookies.clear()
+        self.assertEqual(self.set_fees(scope).status_code, 401)
+        for features in ([], ["tradeReconciliation"]):
+            self.authenticate("user", features=features)
+            self.assertEqual(self.set_fees(scope).status_code, 403)
+            self.assertEqual(self.reconciliation_snapshot(), before)
+
+    def test_sell_plan_uses_net_profit_after_fees_and_rounds_price_up(self):
+        self.assertEqual(self.upload("import", workbook(sells=0)).status_code, 200)
+        scope = self.report()["selected_scope"]
+        self.assertEqual(self.set_fees(scope).status_code, 200)
+        self.assertEqual(self.set_base(scope, quantity=10000).status_code, 200)
+        before = self.reconciliation_snapshot()
+        response = self.sell_plan(scope, parts=1, target_profit_percent=5, price_step=50)
+        self.assertEqual(response.status_code, 200, response.text)
+        plan = response.json()
+        self.assertRegex(plan["revision"], r"^[0-9a-f]{64}$")
+        self.assertEqual(len(plan["orders"]), 1)
+        order = plan["orders"][0]
+        self.assertEqual(order["quantity"], 100)  # Protected base is never included.
+        self.assertEqual(order["price"], 10550)
+        self.assertEqual(order["gross_proceeds"], 1055000)
+        self.assertEqual(order["sell_fee"], 1582.5)
+        self.assertEqual(order["sell_tax"], 1055)
+        self.assertEqual(order["allocated_cost"], 1001500)
+        self.assertEqual(order["net_proceeds"], 1052362.5)
+        self.assertEqual(order["net_profit"], 50862.5)
+        self.assertGreaterEqual(order["net_profit_percent"], 5)
+        self.assertEqual(plan["totals"]["quantity"], 100)
+        self.assertEqual(plan["totals"]["net_profit"], order["net_profit"])
+        self.assertEqual(self.reconciliation_snapshot(), before)
+        self.assertEqual(self.store.list_nav_snapshots(), [])
+        self.assertEqual(self.store.list_all_signals(), [])
+
+    def test_sell_plan_equal_integer_parts_ladder_and_total_profit_reconcile(self):
+        self.assertEqual(self.upload("import", workbook(buys=703, sells=0)).status_code, 200)
+        scope = self.report()["selected_scope"]
+        self.assertEqual(self.set_fees(scope, buy="0.2", sell="0.3", tax="0.1").status_code, 200)
+        response = self.sell_plan(scope, parts=3, target_profit_percent=2, upper_profit_percent=4, price_step=100)
+        self.assertEqual(response.status_code, 200, response.text)
+        plan = response.json()
+        orders = plan["orders"]
+        self.assertEqual([row["quantity"] for row in orders], [235, 234, 234])
+        self.assertEqual([row["target_profit_percent"] for row in orders], [2, 3, 4])
+        self.assertEqual([row["price"] for row in orders], sorted(row["price"] for row in orders))
+        for order in orders:
+            self.assertEqual(order["price"] % 100, 0)
+            self.assertGreaterEqual(order["net_profit_percent"], order["target_profit_percent"])
+        totals = plan["totals"]
+        for field in ("quantity", "gross_proceeds", "sell_fee", "sell_tax", "allocated_cost", "net_proceeds", "net_profit"):
+            self.assertAlmostEqual(totals[field], sum(order[field] for order in orders), places=6)
+        self.assertEqual(totals["quantity"], 703)
+        self.assertAlmostEqual(totals["allocated_cost"], 703 * 10020)
+        self.assertGreaterEqual(totals["net_profit_percent"], 2)
+
+    def test_sell_plan_invalid_queries_and_base_only_inventory_produce_no_changes(self):
+        self.assertEqual(self.upload("import", workbook(buys=2, sells=0)).status_code, 200)
+        scope = self.report()["selected_scope"]
+        before = self.reconciliation_snapshot()
+        cases = ({"parts": 0}, {"parts": 101}, {"parts": 3}, {"parts": "true"},
+                 {"target_profit_percent": -1}, {"target_profit_percent": "NaN"},
+                 {"target_profit_percent": "Infinity"}, {"target_profit_percent": "true"},
+                 {"target_profit_percent": 10001}, {"target_profit_percent": "0.1234567"},
+                 {"target_profit_percent": 5, "upper_profit_percent": 4},
+                 {"price_step": 0}, {"price_step": 1000001}, {"price_step": "1.5"}, {"ticker": "MISSING"})
+        for values in cases:
+            with self.subTest(values=values):
+                response = self.sell_plan(scope, **values)
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(self.reconciliation_snapshot(), before)
+        self.assertEqual(self.set_base(scope, quantity=10000).status_code, 200)
+        self.assertEqual(self.upload("import", workbook("06/01/2026", buys=0, sells=2)).status_code, 200)
+        closed = self.reconciliation_snapshot()
+        response = self.sell_plan(scope, parts=1)
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(self.reconciliation_snapshot(), closed)
+
+    def test_sell_plan_readonly_permissions_and_revision_follow_fee_updates(self):
+        self.assertEqual(self.upload("import", workbook(sells=0)).status_code, 200)
+        scope = self.report()["selected_scope"]
+        response = self.sell_plan(scope)
+        self.assertEqual(response.status_code, 200, response.text)
+        revision = response.json()["revision"]
+        self.assertEqual(self.set_fees(scope).status_code, 200)
+        updated = self.sell_plan(scope)
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertNotEqual(updated.json()["revision"], revision)
+        before = self.reconciliation_snapshot()
+        self.client.cookies.clear()
+        self.assertEqual(self.sell_plan(scope).status_code, 401)
+        for features, strategies, expected in (([], [], 403), (["tradeReconciliation"], ["RF"], 403), (["tradeReconciliation"], [], 200)):
+            self.authenticate("user", features=features, strategies=strategies)
+            response = self.sell_plan(scope)
+            self.assertEqual(response.status_code, expected, response.text)
+            self.assertEqual(self.reconciliation_snapshot(), before)
+
+    def test_fee_updates_invalidate_account_deletion_and_report_deletion_preserves_fees(self):
+        self.assertEqual(self.upload("import").status_code, 200)
+        scope = self.report()["selected_scope"]
+        before = self.report(scope)
+        self.assertEqual(self.set_fees(scope).status_code, 200)
+        after = self.report(scope)
+        self.assertNotEqual(after["revision"], before["revision"])
+        snapshot = self.reconciliation_snapshot()
+        stale = self.delete_account(scope, before["revision"])
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(self.reconciliation_snapshot(), snapshot)
+        removed = self.delete_import(scope, after["imports"][0])
+        self.assertEqual(removed.status_code, 200, removed.text)
+        fee_only = self.report(scope)
+        self.assertEqual(fee_only["imports"], [])
+        self.assertEqual(fee_only["positions"], [])
+        self.assertEqual(fee_only["selected_scope"], scope)
+        self.assertTrue(fee_only["fees"]["configured"])
+        self.assertEqual(self.reconciliation_snapshot()["reconciliation_fees"], snapshot["reconciliation_fees"])
+        cleared = self.delete_account(scope, fee_only["revision"])
+        self.assertEqual(cleared.status_code, 200, cleared.text)
+        self.assertEqual(cleared.json()["deleted_fees_count"], 1)
+        self.assertEqual(self.reconciliation_snapshot()["reconciliation_fees"], [])
+        self.assertEqual(self.report()["scopes"], [])
 
 
 if __name__ == "__main__":

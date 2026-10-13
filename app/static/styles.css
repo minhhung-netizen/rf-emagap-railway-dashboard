@@ -40,7 +40,7 @@
 .reconciliationMethod { border-bottom: 1px solid var(--line-soft); color: var(--muted); padding-bottom: 8px; }
 .reconciliationMethod p { max-width: 1000px; }
 .reconciliationImport { background: var(--field); border: 1px solid var(--line); border-radius: 8px; margin: 20px 0 12px; padding: 16px; }
-.reconciliationUploadActions, .reconciliationFilters, .reconciliationBaseForm { align-items: end; display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.reconciliationUploadActions, .reconciliationFilters, .reconciliationBaseForm, .reconciliationFeeForm, .reconciliationPlanForm { align-items: end; display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
 .reconciliationUploadActions > label { flex: 1 1 300px; min-width: 0; }
 .reconciliationPanel label { color: var(--muted); display: grid; font-size: 12px; gap: 6px; }
 .reconciliationPanel input, .reconciliationPanel select { max-width: none; min-height: 44px; width: 100%; }
@@ -53,6 +53,12 @@
 .reconciliationFilters > label:first-child { flex-basis: 220px; }
 .reconciliationBaseForm > label { flex: 1 1 190px; min-width: 0; max-width: 300px; }
 .reconciliationBaseForm input[type="number"] { font-variant-numeric: tabular-nums; text-align: right; }
+.reconciliationFeeForm > label { flex: 1 1 180px; max-width: 300px; min-width: 0; }
+.reconciliationPlanForm > label { flex: 1 1 150px; min-width: 0; }
+.reconciliationPlanForm > label:first-child { flex-basis: 200px; }
+.reconciliationFeeForm input, .reconciliationPlanForm input { font-variant-numeric: tabular-nums; text-align: right; }
+.reconciliationPlanSummary { background: var(--field); border: 1px solid var(--line); border-radius: 6px; margin: 16px 0; padding: 14px; }
+.reconciliationPlanTotals { margin-top: 16px; }
 .reconciliationReplace { align-items: start; display: flex !important; gap: 8px !important; margin-bottom: 14px; }
 .reconciliationReplace[hidden] { display: none !important; }
 .reconciliationPreviewHead { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
@@ -92,6 +98,8 @@
   .reconciliationUploadActions > button { flex: 1 1 135px; }
   .reconciliationBaseForm > label { flex-basis: calc(50% - 12px); max-width: none; }
   .reconciliationBaseForm > button { flex: 1 1 135px; }
+  .reconciliationFeeForm > label, .reconciliationPlanForm > label { flex-basis: calc(50% - 12px); max-width: none; }
+  .reconciliationPlanForm > label:first-child, .reconciliationFeeForm > button, .reconciliationPlanForm > button { flex-basis: 100%; }
   .reconciliationImport { padding: 12px; }
   .reconciliationFilters > label { flex-basis: calc(50% - 12px); min-width: 120px; }
   .reconciliationFilters > label:first-child { flex-basis: 100%; }

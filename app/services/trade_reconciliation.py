@@ -2,7 +2,8 @@
 
 Daily buy-minus-sell quantities add to or consume prior trading inventory.
 Sales keep its weighted average cost and cannot reduce the fixed, already
-owned base. Values and average costs are in VND; fees are not inferred.
+owned base. Values and average costs are in VND. Configured buy fees apply
+to surplus cost; sell fees and tax apply to suggested prices, not quantities.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import unicodedata
 import zipfile
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, localcontext
+from fractions import Fraction
 from io import BytesIO
 from pathlib import PurePath
 
@@ -198,16 +200,58 @@ def _report_revision(item, notes):
     return _revision(dict(report=item, notes=sorted(report_notes, key=lambda n: n["ticker"])))
 
 
-def _scope_revision(scope, imports, notes, bases):
+def _scope_revision(scope, imports, notes, bases, fees):
     return _revision(dict(scope=scope,
                           imports=sorted((i for i in imports if i["scope"] == scope), key=lambda i: (i["trade_date"], i["id"])),
                           notes=sorted((n for n in notes if n["scope"] == scope), key=lambda n: (n["trade_date"], n["ticker"])),
-                          bases=sorted((b for b in bases if b["scope"] == scope), key=lambda b: b["ticker"])))
+                          bases=sorted((b for b in bases if b["scope"] == scope), key=lambda b: b["ticker"]),
+                          fees=[f for f in fees if f["scope"] == scope]))
 
 
 def _scope_data(conn, scope):
     return tuple([dict(r) for r in conn.execute(f"SELECT * FROM {table} WHERE scope=?", (scope,))]
-                 for table in ("reconciliation_imports", "reconciliation_notes", "reconciliation_bases"))
+                 for table in ("reconciliation_imports", "reconciliation_notes", "reconciliation_bases", "reconciliation_fees"))
+
+
+def _scope_exists(conn, scope):
+    return conn.execute("SELECT 1 FROM reconciliation_imports WHERE scope=? UNION ALL "
+                        "SELECT 1 FROM reconciliation_bases WHERE scope=? UNION ALL "
+                        "SELECT 1 FROM reconciliation_fees WHERE scope=? LIMIT 1", (scope, scope, scope)).fetchone() is not None
+
+
+def _percent(value, label, *, maximum=Decimal(100), inclusive=False):
+    if isinstance(value, bool) or value is None:
+        raise ValueError(f"{label}: cần tỷ lệ phần trăm hợp lệ")
+    text = str(value).strip()
+    if len(text) > 128:
+        raise ValueError(f"{label}: định dạng số vượt giới hạn")
+    try:
+        number = Decimal(text)
+    except InvalidOperation:
+        raise ValueError(f"{label}: cần tỷ lệ phần trăm hợp lệ") from None
+    if not number.is_finite() or number < 0 or number > maximum or (not inclusive and number == maximum):
+        bound = "không vượt quá" if inclusive else "nhỏ hơn"
+        raise ValueError(f"{label}: tỷ lệ phải không âm và {bound} {maximum}%")
+    if not number:
+        return Decimal(0)
+    # Inspect the tuple without normalize(): Decimal context can underflow
+    # extreme negative exponents to zero before validation.
+    digits = number.as_tuple().digits
+    trailing_zeroes = 0
+    for digit in reversed(digits):
+        if digit:
+            break
+        trailing_zeroes += 1
+    if number.as_tuple().exponent + trailing_zeroes < -6:
+        raise ValueError(f"{label}: tối đa 6 chữ số thập phân")
+    return number
+
+
+def _public_fees(scope, record=None):
+    return dict(scope=scope, **{key: float(Decimal(record[key])) if record else 0.0
+                               for key in ("buy_fee_percent", "sell_fee_percent", "sell_tax_percent")},
+                configured=record is not None, updated_by=record["updated_by"] if record else None,
+                updated_at=record["updated_at"] if record else None)
 
 
 def _check_revision(expected, current):
@@ -341,7 +385,7 @@ def import_report(store, parsed: dict, username, replace_existing=False) -> dict
                 scope=scope, trade_date=day, rows_count=len(canonical))
 
 
-def build_report(store, scope=None) -> dict:
+def _build_report_snapshot(store, scope=None):
     with store.connect() as conn:
         # A deferred read transaction keeps the exposed revisions consistent
         # with the report, even if another session edits notes or imports.
@@ -350,14 +394,15 @@ def build_report(store, scope=None) -> dict:
         all_notes = [dict(r) for r in conn.execute("SELECT * FROM reconciliation_notes")]
         notes = {(r["scope"], r["trade_date"], r["ticker"]): r["note"] for r in all_notes}
         all_bases = [dict(r) for r in conn.execute("SELECT * FROM reconciliation_bases ORDER BY scope,ticker")]
+        all_fees = [dict(r) for r in conn.execute("SELECT * FROM reconciliation_fees ORDER BY scope")]
     scope_map = {}
     for item in imports:
         s = scope_map.setdefault(item["scope"], dict(scope=item["scope"], account_label=item["account_label"],
                                                    first_trade_date=item["trade_date"], last_trade_date=item["trade_date"], imports_count=0))
         s["last_trade_date"] = item["trade_date"]
         s["imports_count"] += 1
-    for base in all_bases:
-        scope_map.setdefault(base["scope"], dict(scope=base["scope"], account_label="Tài khoản · #" + base["scope"][-6:],
+    for record in [*all_bases, *all_fees]:
+        scope_map.setdefault(record["scope"], dict(scope=record["scope"], account_label="Tài khoản · #" + record["scope"][-6:],
                                                 first_trade_date=None, last_trade_date=None, imports_count=0))
     if scope and scope not in scope_map:
         raise ValueError("Không tìm thấy tài khoản đối chiếu")
@@ -373,13 +418,16 @@ def build_report(store, scope=None) -> dict:
     selected_scope = scope or (scopes[0]["scope"] if scopes else None)
     selected = [i for i in imports if i["scope"] == selected_scope]
     bases = [b for b in all_bases if b["scope"] == selected_scope]
+    fee_record = next((f for f in all_fees if f["scope"] == selected_scope), None)
+    fees = _public_fees(selected_scope, fee_record)
+    buy_fee = Fraction(Decimal(fee_record["buy_fee_percent"])) / 100 if fee_record else Fraction(0)
     base_quantities = {b["ticker"]: b["base_quantity"] for b in bases}
     holdings = {}
     selected_label = scope_map[selected_scope]["account_label"] if selected_scope else ""
     for base in bases:
         key = (selected_scope, base["ticker"])
         holdings[key] = dict(scope=selected_scope, account_label=selected_label, ticker=base["ticker"],
-                             quantity=0, cost=Decimal(0), first_trade_date=None, last_trade_date=None)
+                             quantity=0, cost=Fraction(0), first_trade_date=None, last_trade_date=None)
     rows = []
     ignored = 0
     ignored_sales = 0
@@ -391,7 +439,7 @@ def build_report(store, scope=None) -> dict:
                 surplus = row["residual_buy_quantity"]
                 key = (item["scope"], raw["ticker"])
                 position = holdings.setdefault(key, dict(scope=key[0], account_label=item["account_label"], ticker=key[1],
-                                                         quantity=0, cost=Decimal(0), first_trade_date=item["trade_date"],
+                                                         quantity=0, cost=Fraction(0), first_trade_date=item["trade_date"],
                                                          last_trade_date=item["trade_date"]))
                 opening = position["quantity"]
                 opening_average = position["cost"] / opening if opening else None
@@ -400,14 +448,17 @@ def build_report(store, scope=None) -> dict:
                 ignored_sales += ignored_sell
                 if not surplus and not sold:
                     ignored += 1
-                added_cost = Decimal(0)
+                added_cost = Fraction(0)
+                added_fee = Fraction(0)
                 if surplus:
-                    added_cost = Decimal(raw["buy_amount"]) * surplus / raw["buy_quantity"]
+                    before_fee = Fraction(Decimal(raw["buy_amount"])) * surplus / raw["buy_quantity"]
+                    added_fee = before_fee * buy_fee
+                    added_cost = before_fee + added_fee
                     position["quantity"] += surplus
                     position["cost"] += added_cost
                 elif sold:
                     position["quantity"] -= sold
-                    position["cost"] = opening_average * position["quantity"] if position["quantity"] else Decimal(0)
+                    position["cost"] = opening_average * position["quantity"] if position["quantity"] else Fraction(0)
                 if position["first_trade_date"] is None:
                     position["first_trade_date"] = item["trade_date"]
                 position["last_trade_date"] = item["trade_date"]
@@ -418,6 +469,9 @@ def build_report(store, scope=None) -> dict:
                              "opening_quantity": opening, "opening_average_cost": float(opening_average) if opening_average is not None else None,
                              "closing_quantity": position["quantity"], "closing_average_cost": float(closing_average) if closing_average is not None else None,
                              "residual_buy_cost": float(added_cost), "tracked_sell_quantity": sold,
+                             "residual_buy_fee": float(added_fee),
+                             "buy_average_price_with_fee": float(Fraction(Decimal(raw["buy_amount"])) / raw["buy_quantity"] * (1 + buy_fee)) if raw["buy_quantity"] else None,
+                             "buy_fee_percent": fees["buy_fee_percent"],
                              "ignored_sell_quantity": ignored_sell, "base_quantity": base_quantity,
                              "opening_total_quantity": base_quantity + opening,
                              "closing_total_quantity": base_quantity + position["quantity"], "status": status,
@@ -428,11 +482,11 @@ def build_report(store, scope=None) -> dict:
                           total_quantity=p["quantity"] + base_quantities.get(p["ticker"], 0),
                           status="buy_remaining" if p["quantity"] else "base_only" if base_quantities.get(p["ticker"], 0) else "closed")
                      for p in holdings.values()]
-        total_cost = float(sum((p["cost"] for p in holdings.values()), Decimal(0)))
+        total_cost = float(sum((p["cost"] for p in holdings.values()), Fraction(0)))
     metadata = [{k: v for k, v in i.items() if k not in {"rows_json", "digest"}} |
                 dict(rows_count=len(json.loads(i["rows_json"])), revision=_report_revision(i, all_notes)) for i in selected]
-    return dict(scopes=scopes, selected_scope=selected_scope, bases=bases,
-                revision=_scope_revision(selected_scope, imports, all_notes, all_bases) if selected_scope else None,
+    return dict(scopes=scopes, selected_scope=selected_scope, bases=bases, fees=fees,
+                revision=_scope_revision(selected_scope, imports, all_notes, all_bases, all_fees) if selected_scope else None,
                 imports=list(reversed(metadata)), rows=sorted(rows, key=lambda r: (r["trade_date"], r["ticker"], r["scope"]), reverse=True),
                 positions=sorted(positions, key=lambda p: (p["ticker"], p["scope"])),
                 totals=dict(imports_count=len(selected), daily_rows_count=len(rows), ignored_rows_count=ignored,
@@ -441,7 +495,12 @@ def build_report(store, scope=None) -> dict:
                             ignored_sell_quantity=ignored_sales,
                             base_quantity=sum(p["base_quantity"] for p in positions),
                             total_quantity=sum(p["total_quantity"] for p in positions)),
-                currency="VND", method="daily_net_inventory_with_base")
+                currency="VND", method="daily_net_inventory_with_base", cost_includes_buy_fee=True), holdings, fee_record
+
+
+def build_report(store, scope=None) -> dict:
+    report, _, _ = _build_report_snapshot(store, scope)
+    return report
 
 
 def save_note(store, scope, trade_date, ticker, note, username) -> dict:
@@ -476,9 +535,8 @@ def save_base(store, scope, ticker, quantity, username) -> dict:
     updated = utc_now_iso()
     with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        if conn.execute("SELECT 1 FROM reconciliation_imports WHERE scope=? UNION ALL "
-                        "SELECT 1 FROM reconciliation_bases WHERE scope=? LIMIT 1", (scope, scope)).fetchone() is None:
-            raise ValueError("Không tìm thấy tài khoản đối chiếu đã có báo cáo hoặc cổ phiếu cơ sở")
+        if not _scope_exists(conn, scope):
+            raise ValueError("Không tìm thấy tài khoản đối chiếu đã có dữ liệu")
         conn.execute("INSERT INTO reconciliation_bases(scope,ticker,base_quantity,updated_by,updated_at) VALUES(?,?,?,?,?) "
                      "ON CONFLICT(scope,ticker) DO UPDATE SET base_quantity=excluded.base_quantity,updated_by=excluded.updated_by,updated_at=excluded.updated_at",
                      (scope, ticker, quantity, username, updated))
@@ -508,17 +566,99 @@ def delete_report(store, scope, import_id, expected_revision) -> dict:
 
 
 def delete_scope(store, scope, expected_revision) -> dict:
-    """Clear imports, notes and bases for one account under a checked snapshot."""
+    """Clear one account's imports, notes, bases and fee configuration."""
     if not isinstance(scope, str) or not scope:
         raise ValueError("Cần chọn tài khoản đối chiếu")
     with store.connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        imports, notes, bases = _scope_data(conn, scope)
-        if not imports and not notes and not bases:
+        imports, notes, bases, fees = _scope_data(conn, scope)
+        if not imports and not notes and not bases and not fees:
             raise ReconciliationNotFound("Không tìm thấy dữ liệu đối chiếu của tài khoản đã chọn")
-        _check_revision(expected_revision, _scope_revision(scope, imports, notes, bases))
+        _check_revision(expected_revision, _scope_revision(scope, imports, notes, bases, fees))
         deleted_notes = conn.execute("DELETE FROM reconciliation_notes WHERE scope=?", (scope,)).rowcount
         deleted_imports = conn.execute("DELETE FROM reconciliation_imports WHERE scope=?", (scope,)).rowcount
         deleted_bases = conn.execute("DELETE FROM reconciliation_bases WHERE scope=?", (scope,)).rowcount
+        deleted_fees = conn.execute("DELETE FROM reconciliation_fees WHERE scope=?", (scope,)).rowcount
     return dict(scope=scope, deleted_imports_count=deleted_imports,
-                deleted_notes_count=deleted_notes, deleted_bases_count=deleted_bases)
+                deleted_notes_count=deleted_notes, deleted_bases_count=deleted_bases, deleted_fees_count=deleted_fees)
+
+
+def save_fees(store, scope, buy_fee_percent, sell_fee_percent, sell_tax_percent, username):
+    """Configure explicit percentage rates for all history of an existing scope."""
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Cần chọn tài khoản đối chiếu")
+    buy_fee = _percent(buy_fee_percent, "Phí mua")
+    sell_fee = _percent(sell_fee_percent, "Phí bán")
+    sell_tax = _percent(sell_tax_percent, "Thuế bán")
+    if sell_fee + sell_tax >= 100:
+        raise ValueError("Tổng phí bán và thuế bán phải nhỏ hơn 100%")
+    record = dict(scope=scope, buy_fee_percent=_exact(buy_fee), sell_fee_percent=_exact(sell_fee),
+                  sell_tax_percent=_exact(sell_tax), updated_by=username, updated_at=utc_now_iso())
+    with store.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if not _scope_exists(conn, scope):
+            raise ValueError("Không tìm thấy tài khoản đối chiếu đã có dữ liệu")
+        conn.execute("INSERT INTO reconciliation_fees(scope,buy_fee_percent,sell_fee_percent,sell_tax_percent,updated_by,updated_at) VALUES(?,?,?,?,?,?) "
+                     "ON CONFLICT(scope) DO UPDATE SET buy_fee_percent=excluded.buy_fee_percent,sell_fee_percent=excluded.sell_fee_percent,"
+                     "sell_tax_percent=excluded.sell_tax_percent,updated_by=excluded.updated_by,updated_at=excluded.updated_at",
+                     (scope, record["buy_fee_percent"], record["sell_fee_percent"], record["sell_tax_percent"], username, record["updated_at"]))
+    return _public_fees(scope, record)
+
+
+def build_sell_plan(store, scope, ticker, parts, target_profit_percent, upper_profit_percent=None, price_step=100):
+    """Suggest equal quantity parts of current surplus without placing orders."""
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("Cần chọn tài khoản đối chiếu")
+    if not isinstance(ticker, str) or not re.fullmatch(r"[A-Z0-9][A-Z0-9._-]{0,19}", ticker.strip().upper()):
+        raise ValueError("Mã cổ phiếu không hợp lệ")
+    ticker = ticker.strip().upper()
+    if isinstance(parts, bool) or not isinstance(parts, int) or not 1 <= parts <= 100:
+        raise ValueError("Số phần bán phải là số nguyên từ 1 đến 100")
+    if isinstance(price_step, bool) or not isinstance(price_step, int) or not 1 <= price_step <= 1000000:
+        raise ValueError("Bước giá phải là số nguyên từ 1 đến 1.000.000 VND")
+    lower = _percent(target_profit_percent, "Lợi nhuận tối thiểu", maximum=Decimal(10000), inclusive=True)
+    upper = lower if upper_profit_percent is None else _percent(upper_profit_percent, "Lợi nhuận tối đa", maximum=Decimal(10000), inclusive=True)
+    if upper < lower:
+        raise ValueError("Lợi nhuận tối đa phải lớn hơn hoặc bằng lợi nhuận tối thiểu")
+    report, holdings, fee_record = _build_report_snapshot(store, scope)
+    holding = holdings.get((scope, ticker))
+    if not holding or not holding["quantity"]:
+        raise ValueError("Mã đã chọn không có tồn mua vượt cơ sở để chia bán")
+    quantity, cost = holding["quantity"], holding["cost"]
+    if parts > quantity:
+        raise ValueError("Số phần bán không được vượt số cổ phiếu tồn mua")
+    average = cost / quantity
+    sell_fee_rate = Fraction(Decimal(fee_record["sell_fee_percent"])) / 100 if fee_record else Fraction(0)
+    sell_tax_rate = Fraction(Decimal(fee_record["sell_tax_percent"])) / 100 if fee_record else Fraction(0)
+    lower, upper = Fraction(lower), Fraction(upper)
+    per_part, remainder = divmod(quantity, parts)
+    orders = []
+    total = dict(quantity=0, **{key: Fraction(0) for key in ("allocated_cost", "gross_proceeds", "sell_fee", "sell_tax", "net_proceeds", "net_profit")})
+    def target_price(target):
+        required_steps = average * (1 + target / 100) / (1 - sell_fee_rate - sell_tax_rate) / price_step
+        # Exact rational ceiling avoids adding a tick when a repeating average
+        # mathematically lands on the tick boundary (e.g. 2/3 × 1.5 = 1).
+        return ((required_steps.numerator + required_steps.denominator - 1) // required_steps.denominator) * price_step
+
+    for index in range(parts):
+        part_quantity = per_part + int(index < remainder)
+        target = lower + (upper - lower) * index / (parts - 1) if parts > 1 else lower
+        price = target_price(target)
+        allocated = average * part_quantity
+        gross = Fraction(price * part_quantity)
+        fee, tax = gross * sell_fee_rate, gross * sell_tax_rate
+        net = gross - fee - tax
+        profit = net - allocated
+        values = dict(quantity=part_quantity, allocated_cost=allocated, gross_proceeds=gross,
+                      sell_fee=fee, sell_tax=tax, net_proceeds=net, net_profit=profit)
+        orders.append(dict(part=index + 1, target_profit_percent=float(target), price=price,
+                           **{key: int(value) if key == "quantity" else float(value) for key, value in values.items()},
+                           net_profit_percent=float(profit / allocated * 100)))
+        for key, value in values.items():
+            total[key] += value
+    return dict(scope=scope, ticker=ticker, quantity=quantity, average_cost=float(average), total_cost=float(cost),
+                fees=report["fees"], target_profit_percent=float(lower), upper_profit_percent=float(upper), price_step=price_step,
+                price_min=target_price(lower), price_max=target_price(upper), orders=orders,
+                totals={key: int(value) if key == "quantity" else float(value) for key, value in total.items()} |
+                       dict(net_profit_percent=float(total["net_profit"] / cost * 100)),
+                revision=report["revision"], currency="VND", cost_includes_buy_fee=True)

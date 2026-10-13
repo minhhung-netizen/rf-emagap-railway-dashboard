@@ -9,6 +9,7 @@ import logging
 import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date
+from decimal import Decimal
 from importlib.util import find_spec
 from typing import Any
 from urllib.parse import unquote
@@ -1320,6 +1321,15 @@ class ReconciliationBase(BaseModel):
     base_quantity: int = Field(ge=0, le=10**12, strict=True)
 
 
+class ReconciliationFees(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: str = Field(min_length=1, max_length=64)
+    buy_fee_percent: Decimal = Field(ge=0, lt=100, max_digits=9, decimal_places=6, allow_inf_nan=False)
+    sell_fee_percent: Decimal = Field(ge=0, lt=100, max_digits=9, decimal_places=6, allow_inf_nan=False)
+    sell_tax_percent: Decimal = Field(default=Decimal(0), ge=0, lt=100, max_digits=9, decimal_places=6, allow_inf_nan=False)
+
+
 def require_reconciliation_access(request: Request) -> None:
     if strategy_restricted(request.state.user):
         raise HTTPException(
@@ -1396,6 +1406,32 @@ def save_reconciliation_base(payload: ReconciliationBase, request: Request):
     return reconciliation_action(
         trade_reconciliation.save_base, store, payload.scope,
         payload.ticker, payload.base_quantity, request.state.user["username"],
+    )
+
+
+@app.put("/api/trade-reconciliation/fees")
+def save_reconciliation_fees(payload: ReconciliationFees, request: Request):
+    require_reconciliation_access(request)
+    return reconciliation_action(
+        trade_reconciliation.save_fees, store, payload.scope, payload.buy_fee_percent,
+        payload.sell_fee_percent, payload.sell_tax_percent, request.state.user["username"],
+    )
+
+
+@app.get("/api/trade-reconciliation/sell-plan")
+def get_reconciliation_sell_plan(
+    request: Request,
+    scope: str = Query(min_length=1, max_length=64),
+    ticker: str = Query(min_length=1, max_length=20),
+    parts: int = Query(default=3, ge=1, le=100),
+    target_profit_percent: Decimal = Query(default=Decimal(5), ge=0, le=10000, max_digits=11, decimal_places=6, allow_inf_nan=False),
+    upper_profit_percent: Decimal | None = Query(default=None, ge=0, le=10000, max_digits=11, decimal_places=6, allow_inf_nan=False),
+    price_step: int = Query(default=100, ge=1, le=10**6),
+):
+    require_reconciliation_access(request)
+    return reconciliation_action(
+        trade_reconciliation.build_sell_plan, store, scope, ticker, parts,
+        target_profit_percent, upper_profit_percent, price_step,
     )
 
 

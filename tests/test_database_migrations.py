@@ -51,14 +51,31 @@ class DatabaseMigrationTest(unittest.TestCase):
             self.assertEqual(upgraded["positions"][0]["quantity"], 75)
             self.assertEqual(upgraded["positions"][0]["average_cost"], 10000)
             self.assertEqual(upgraded["rows"][1]["note"], "Keep note")
+            self.assertFalse(upgraded["fees"]["configured"])
+            self.assertEqual(upgraded["fees"]["buy_fee_percent"], 0)
             trade_reconciliation.save_base(store, "synthetic-scope", "ABC", 10000, "tester")
             position = trade_reconciliation.build_report(store, "synthetic-scope")["positions"][0]
             self.assertEqual(position["quantity"], 75)
             self.assertEqual(position["total_quantity"], 10075)
+            trade_reconciliation.save_fees(store, "synthetic-scope", "0.15", "0.15", "0.1", "tester")
+            # Restarting upgrades a legacy database without resetting its new
+            # settings or rewriting broker fills and notes.
+            restarted = SignalStore(database_path)
+            with_fees = trade_reconciliation.build_report(restarted, "synthetic-scope")
+            self.assertTrue(with_fees["fees"]["configured"])
+            self.assertEqual(with_fees["fees"]["buy_fee_percent"], 0.15)
+            self.assertEqual(with_fees["positions"][0]["average_cost"], 10015)
+            self.assertEqual(with_fees["positions"][0]["total_cost"], 751125)
+            self.assertEqual(with_fees["positions"][0]["base_quantity"], 10000)
+            self.assertEqual(with_fees["rows"][1]["note"], "Keep note")
             with store.connect() as connection:
                 self.assertEqual(
                     [row[0] for row in connection.execute("SELECT rows_json FROM reconciliation_imports ORDER BY trade_date")],
                     original_rows,
+                )
+                self.assertEqual(
+                    [row[0] for row in connection.execute("SELECT digest FROM reconciliation_imports ORDER BY trade_date")],
+                    ["synthetic-digest", "synthetic-digest"],
                 )
 
     def test_adds_price_to_legacy_signal_ledger_without_losing_rows(self):

@@ -38,6 +38,14 @@ CREATE TABLE IF NOT EXISTS reconciliation_bases (
     updated_at TEXT NOT NULL,
     PRIMARY KEY(scope, ticker)
 );
+CREATE TABLE IF NOT EXISTS reconciliation_fees (
+    scope TEXT PRIMARY KEY,
+    buy_fee_percent TEXT NOT NULL,
+    sell_fee_percent TEXT NOT NULL,
+    sell_tax_percent TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS ledger_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     reference TEXT NOT NULL UNIQUE,

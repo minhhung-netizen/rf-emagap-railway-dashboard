@@ -2,7 +2,7 @@
 
 Dashboard FastAPI nhận tín hiệu cổ phiếu từ TradingView, theo dõi vị thế RF/EMA, đối chiếu danh sách rebalance và hiển thị hiệu suất NAV. Ứng dụng không gửi lệnh tới công ty chứng khoán.
 
-Tab **Đối chiếu khớp lệnh** nhận báo cáo Excel TCBS, thiết lập lượng cổ phiếu cơ sở đã có sẵn theo mã, tính giá vốn bình quân cho phần mua thêm và giảm phần này khi bán qua các phiên. Admin có thể xóa từng báo cáo để tính lại lũy kế hoặc xóa toàn bộ dữ liệu đối chiếu của tài khoản đang chọn, sau bước xác nhận. Xem [cách nhập, xóa và quy tắc tính](DASHBOARD_GUIDE.md#đối-chiếu-khớp-lệnh-từ-excel).
+Tab **Đối chiếu khớp lệnh** nhận báo cáo Excel TCBS, giữ riêng cổ phiếu cơ sở, tính giá vốn phần mua thêm gồm phí mua và giảm dư mua khi bán qua các phiên. Phí cấu hình riêng theo tài khoản; gợi ý dải giá bán chia đều dư mua để đạt lợi nhuận mục tiêu sau phí bán/chi phí bán đã nhập. Admin có thể xóa từng báo cáo để tính lại lũy kế hoặc xóa toàn bộ dữ liệu đối chiếu của tài khoản đang chọn, sau bước xác nhận. Xem [cách nhập, cấu hình phí, gợi ý bán và xóa](DASHBOARD_GUIDE.md#đối-chiếu-khớp-lệnh-từ-excel).
 
 **Hướng dẫn sử dụng và vận hành:** [DASHBOARD_GUIDE.md](DASHBOARD_GUIDE.md). Đây là tài liệu chính cho bản Railway hiện tại; mỗi thay đổi chức năng phải cập nhật hướng dẫn trong cùng commit.
 

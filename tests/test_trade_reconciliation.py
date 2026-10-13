@@ -490,7 +490,7 @@ class ReconciliationTests(unittest.TestCase):
         other_before = service.build_report(self.store, other["scope"])
         report = service.build_report(self.store, scope)
         result = service.delete_scope(self.store, scope, report["revision"])
-        self.assertEqual(result, dict(scope=scope, deleted_imports_count=2, deleted_notes_count=2, deleted_bases_count=2))
+        self.assertEqual(result, dict(scope=scope, deleted_imports_count=2, deleted_notes_count=2, deleted_bases_count=2, deleted_fees_count=0))
         self.assertEqual(service.build_report(self.store, other["scope"]), {
             **other_before, "scopes": [s for s in other_before["scopes"] if s["scope"] == other["scope"]]})
         with self.store.connect() as conn:
@@ -512,7 +512,7 @@ class ReconciliationTests(unittest.TestCase):
                          (scope, first["trade_date"], "ABC", "Legacy orphan", "tester", "2026-01-05T00:00:00+00:00"))
         report = service.build_report(self.store, scope)
         result = service.delete_scope(self.store, scope, report["revision"])
-        self.assertEqual(result, dict(scope=scope, deleted_imports_count=0, deleted_notes_count=1, deleted_bases_count=1))
+        self.assertEqual(result, dict(scope=scope, deleted_imports_count=0, deleted_notes_count=1, deleted_bases_count=1, deleted_fees_count=0))
         self.assertEqual(service.build_report(self.store)["selected_scope"], other["scope"])
 
     def test_report_delete_rejects_replacement_and_note_edit_with_no_partial_deletion(self):
@@ -602,6 +602,239 @@ class ReconciliationTests(unittest.TestCase):
             self.assertEqual(raw[0]["buy_amount"], "0.3")
             for table in ("ledger_entries", "ledger_closes", "nav_snapshots"):
                 self.assertEqual(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0)
+
+
+class FeesAndSellPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = SignalStore(Path(self.temp.name) / "test.db")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def add(self, rows, **kwargs):
+        parsed = parse(rows, **kwargs)
+        service.import_report(self.store, parsed, "tester")
+        return parsed
+
+    def test_zero_default_fees_preserve_cost_and_config_does_not_change_source(self):
+        parsed = self.add([buy(100, 10000), sell(40)])
+        scope = parsed["scope"]
+        report = service.build_report(self.store, scope)
+        self.assertEqual(report["fees"], dict(scope=scope, buy_fee_percent=0, sell_fee_percent=0, sell_tax_percent=0,
+                                             configured=False, updated_by=None, updated_at=None))
+        self.assertTrue(report["cost_includes_buy_fee"])
+        self.assertEqual(report["positions"][0]["average_cost"], 10000)
+        self.assertEqual(report["positions"][0]["total_cost"], 600000)
+        self.assertEqual(report["rows"][0]["residual_buy_fee"], 0)
+        self.assertEqual(report["rows"][0]["buy_average_price_with_fee"], 10000)
+        with self.store.connect() as conn:
+            before_source = dict(conn.execute("SELECT * FROM reconciliation_imports").fetchone())
+        saved = service.save_fees(self.store, scope, 0, 0, 0, "tester")
+        self.assertTrue(saved["configured"])
+        configured = service.build_report(self.store, scope)
+        self.assertEqual(configured["positions"], report["positions"])
+        self.assertEqual(configured["rows"], report["rows"])
+        self.assertNotEqual(configured["revision"], report["revision"])
+        self.assertEqual(configured["imports"][0]["revision"], report["imports"][0]["revision"])
+        with self.store.connect() as conn:
+            self.assertEqual(dict(conn.execute("SELECT * FROM reconciliation_imports").fetchone()), before_source)
+        self.assertEqual(service.assess_import(self.store, parsed), "duplicate")
+
+    def test_buy_fee_replays_weighted_cost_partial_sale_and_new_purchase_without_touching_base(self):
+        parsed = self.add([buy(100, 10000), sell(40)])
+        scope = parsed["scope"]
+        self.add([buy(100, 20000), sell(50)], day="06/01/2026")
+        self.add([sell(80)], day="07/01/2026")
+        service.save_base(self.store, scope, "ABC", 10000, "tester")
+        service.save_fees(self.store, scope, "0.5", "0.15", "0.1", "tester")
+        report = service.build_report(self.store, scope)
+        position = report["positions"][0]
+        self.assertEqual(position["quantity"], 30)
+        self.assertEqual(position["total_quantity"], 10030)
+        self.assertAlmostEqual(position["average_cost"], 1608000 / 110)
+        self.assertAlmostEqual(position["total_cost"], 30 * 1608000 / 110)
+        purchase = next(r for r in report["rows"] if r["trade_date"] == "2026-01-05")
+        self.assertEqual(purchase["buy_average_price"], 10000)
+        self.assertEqual(purchase["buy_average_price_with_fee"], 10050)
+        self.assertEqual(purchase["residual_buy_cost"], 603000)
+        self.assertEqual(purchase["residual_buy_fee"], 3000)
+        self.assertEqual(report["rows"][0]["closing_average_cost"], report["rows"][0]["opening_average_cost"])
+        self.add([buy(100, 25000)], day="08/01/2026")
+        position = service.build_report(self.store, scope)["positions"][0]
+        self.assertEqual(position["quantity"], 130)
+        self.assertAlmostEqual(position["average_cost"], (30 * 1608000 / 110 + 2512500) / 130)
+        service.save_fees(self.store, scope, "0.15", "0.2", "0.1", "tester")
+        position = service.build_report(self.store, scope)["positions"][0]
+        self.assertAlmostEqual(position["average_cost"], (30 * 1600000 / 110 + 2500000) * 1.0015 / 130)
+        self.assertEqual(position["base_quantity"], 10000)
+
+    def test_fee_validation_is_atomic_and_rates_are_persisted_as_decimal_text(self):
+        parsed = self.add([buy()])
+        scope = parsed["scope"]
+        service.save_fees(self.store, scope, "0.150000", "0.2", "0.1", "tester")
+        before = service.build_report(self.store, scope)
+        invalid = (-1, True, None, "NaN", "Infinity", "-Infinity", "100", "0.1234567", "1e-10000", "1e-999999999", "0." + "1" * 130, "text")
+        for index in range(3):
+            for value in invalid:
+                fees = ["0.1", "0.1", "0.1"]
+                fees[index] = value
+                with self.subTest(index=index, value=value), self.assertRaises(ValueError):
+                    service.save_fees(self.store, scope, *fees, "tester")
+        with self.assertRaises(ValueError):
+            service.save_fees(self.store, scope, 0, 99, 1, "tester")
+        with self.assertRaises(ValueError):
+            service.save_fees(self.store, "unknown", 0, 0, 0, "tester")
+        self.assertEqual(service.build_report(self.store, scope), before)
+        with self.store.connect() as conn:
+            rates = dict(conn.execute("SELECT * FROM reconciliation_fees").fetchone())
+            self.assertEqual(rates["buy_fee_percent"], "0.15")
+            self.assertEqual(rates["sell_fee_percent"], "0.2")
+            self.assertEqual(rates["sell_tax_percent"], "0.1")
+        service.save_fees(self.store, scope, "99.999999", "99.999998", "0.000001", "tester")
+        self.assertEqual(service.build_report(self.store, scope)["fees"]["buy_fee_percent"], 99.999999)
+        saved = service.save_fees(self.store, scope, "0e-999999999", "0e-999999999", "0e-999999999", "tester")
+        self.assertEqual(saved["buy_fee_percent"], 0)
+        with self.store.connect() as conn:
+            self.assertEqual(conn.execute("SELECT buy_fee_percent FROM reconciliation_fees").fetchone()[0], "0")
+
+    def test_fee_changes_are_isolated_by_scope_and_invalidate_only_account_revision(self):
+        first = self.add([buy(100, 10000)])
+        other = self.add([buy(100, 10000)], account="OTHER0002")
+        other_before = service.build_report(self.store, other["scope"])
+        first_before = service.build_report(self.store, first["scope"])
+        service.save_fees(self.store, first["scope"], "1", "1", "1", "tester")
+        first_after = service.build_report(self.store, first["scope"])
+        self.assertNotEqual(first_after["revision"], first_before["revision"])
+        self.assertEqual(first_after["imports"][0]["revision"], first_before["imports"][0]["revision"])
+        self.assertEqual(first_after["positions"][0]["average_cost"], 10100)
+        self.assertEqual(service.build_report(self.store, other["scope"]), other_before)
+        with self.assertRaises(service.ReconciliationConflict):
+            service.delete_scope(self.store, first["scope"], first_before["revision"])
+        self.assertEqual(service.build_report(self.store, first["scope"]), first_after)
+
+    def test_fee_only_scope_survives_single_delete_allows_changes_and_full_clear_removes_fees(self):
+        parsed = self.add([buy()])
+        scope = parsed["scope"]
+        target = service.build_report(self.store, scope)["imports"][0]
+        service.save_fees(self.store, scope, "0.15", "0.2", "0.1", "tester")
+        service.delete_report(self.store, scope, target["id"], target["revision"])
+        report = service.build_report(self.store, scope)
+        self.assertEqual(report["imports"], [])
+        self.assertEqual(report["positions"], [])
+        self.assertEqual(report["scopes"][0]["account_label"], "Tài khoản · #" + scope[-6:])
+        self.assertTrue(report["fees"]["configured"])
+        service.save_fees(self.store, scope, "0.2", "0.25", "0.1", "tester")
+        service.save_base(self.store, scope, "ABC", 10000, "tester")
+        report = service.build_report(self.store, scope)
+        result = service.delete_scope(self.store, scope, report["revision"])
+        self.assertEqual(result, dict(scope=scope, deleted_imports_count=0, deleted_notes_count=0, deleted_bases_count=1, deleted_fees_count=1))
+        self.assertIsNone(service.build_report(self.store)["selected_scope"])
+        with self.store.connect() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM reconciliation_fees").fetchone()[0], 0)
+
+    def test_sell_plan_uses_total_surplus_equal_parts_after_fees_and_preserves_all_data(self):
+        parsed = self.add([buy(10, 10000)])
+        scope = parsed["scope"]
+        service.save_base(self.store, scope, "ABC", 10000, "tester")
+        service.save_fees(self.store, scope, 1, 1, 1, "tester")
+        before = service.build_report(self.store, scope)
+        plan = service.build_sell_plan(self.store, scope, "abc", 3, 10, 20, 100)
+        self.assertEqual(plan["quantity"], 10)
+        self.assertEqual(plan["average_cost"], 10100)
+        self.assertEqual(plan["total_cost"], 101000)
+        self.assertEqual([o["quantity"] for o in plan["orders"]], [4, 3, 3])
+        self.assertEqual([o["target_profit_percent"] for o in plan["orders"]], [10, 15, 20])
+        self.assertEqual([o["price"] for o in plan["orders"]], [11400, 11900, 12400])
+        self.assertEqual(plan["price_min"], 11400)
+        self.assertEqual(plan["price_max"], 12400)
+        first = plan["orders"][0]
+        self.assertEqual(first["allocated_cost"], 40400)
+        self.assertEqual(first["gross_proceeds"], 45600)
+        self.assertEqual(first["sell_fee"], 456)
+        self.assertEqual(first["sell_tax"], 456)
+        self.assertEqual(first["net_proceeds"], 44688)
+        self.assertEqual(first["net_profit"], 4288)
+        self.assertAlmostEqual(first["net_profit_percent"], 4288 / 40400 * 100)
+        totals = plan["totals"]
+        self.assertEqual(totals["quantity"], 10)
+        self.assertEqual(totals["allocated_cost"], 101000)
+        self.assertEqual(totals["gross_proceeds"], 118500)
+        self.assertEqual(totals["sell_fee"], 1185)
+        self.assertEqual(totals["sell_tax"], 1185)
+        self.assertEqual(totals["net_proceeds"], 116130)
+        self.assertEqual(totals["net_profit"], 15130)
+        self.assertAlmostEqual(totals["net_profit_percent"], 15130 / 101000 * 100)
+        self.assertEqual(plan["revision"], before["revision"])
+        for order in plan["orders"]:
+            self.assertGreaterEqual(order["net_profit_percent"], order["target_profit_percent"])
+        self.assertEqual(service.build_report(self.store, scope), before)
+
+    def test_multiple_buy_days_split_current_total_not_daily_cohorts(self):
+        parsed = self.add([buy(3, 10000)])
+        self.add([buy(4, 20000)], day="06/01/2026")
+        plan = service.build_sell_plan(self.store, parsed["scope"], "ABC", 3, 1, 3)
+        self.assertEqual(plan["quantity"], 7)
+        self.assertEqual([o["quantity"] for o in plan["orders"]], [3, 2, 2])
+        self.assertEqual([o["price"] for o in plan["orders"]], [15900, 16100, 16200])
+        self.assertEqual(plan["totals"]["allocated_cost"], 110000)
+        self.assertAlmostEqual(plan["average_cost"], 110000 / 7)
+
+    def test_one_part_uses_minimum_target_but_band_keeps_requested_upper_target(self):
+        parsed = self.add([buy(10, 10000)])
+        service.save_fees(self.store, parsed["scope"], 1, 1, 1, "tester")
+        plan = service.build_sell_plan(self.store, parsed["scope"], "ABC", 1, 10, 20)
+        self.assertEqual(plan["orders"][0]["quantity"], 10)
+        self.assertEqual(plan["orders"][0]["price"], 11400)
+        self.assertEqual(plan["orders"][0]["target_profit_percent"], 10)
+        self.assertEqual(plan["price_min"], 11400)
+        self.assertEqual(plan["price_max"], 12400)
+        fixed = service.build_sell_plan(self.store, parsed["scope"], "ABC", 2, "10")
+        self.assertEqual(fixed["price_min"], fixed["price_max"])
+        self.assertEqual([o["price"] for o in fixed["orders"]], [11400, 11400])
+
+    def test_exact_ceiling_handles_repeating_average_partial_sale_and_fee_boundaries(self):
+        parsed = self.add([["Mua", "ABC", 3, "0.666666666667", "2"]])
+        scope = parsed["scope"]
+        plan = service.build_sell_plan(self.store, scope, "ABC", 1, 50, price_step=1)
+        self.assertEqual(plan["price_min"], 1)
+        self.add([sell(1, 1)], day="06/01/2026")
+        plan = service.build_sell_plan(self.store, scope, "ABC", 2, 50, price_step=1)
+        self.assertEqual([o["price"] for o in plan["orders"]], [1, 1])
+        self.assertEqual(plan["totals"]["net_profit_percent"], 50)
+        self.add([buy(1, 1)], day="07/01/2026")
+        plan = service.build_sell_plan(self.store, scope, "ABC", 1, 800, price_step=1)
+        self.assertEqual(plan["price_min"], 7)
+        fee_boundary = self.add([buy(1, 99.9)], account="OTHER0002")
+        service.save_fees(self.store, fee_boundary["scope"], 0, 0, "0.1", "tester")
+        self.assertEqual(service.build_sell_plan(self.store, fee_boundary["scope"], "ABC", 1, 0, price_step=100)["price_min"], 100)
+
+    def test_ceiling_does_not_lose_source_precision_via_public_float(self):
+        above = self.add([["Mua", "ABC", 1, "100.000000000000000000001", "100.000000000000000000001"]])
+        below = self.add([["Mua", "ABC", 1, "99.999999999999999999999", "99.999999999999999999999"]], account="OTHER0002")
+        self.assertEqual(service.build_report(self.store, above["scope"])["positions"][0]["average_cost"], 100)
+        self.assertEqual(service.build_sell_plan(self.store, above["scope"], "ABC", 1, 0)["price_min"], 200)
+        self.assertEqual(service.build_sell_plan(self.store, below["scope"], "ABC", 1, 0)["price_min"], 100)
+
+    def test_planner_validation_rejects_base_only_missing_holdings_and_invalid_parameters(self):
+        parsed = self.add([buy(3, 10000)])
+        scope = parsed["scope"]
+        service.save_base(self.store, scope, "XYZ", 10000, "tester")
+        before = service.build_report(self.store, scope)
+        invalid = [dict(parts=p) for p in (0, 4, 101, True, 1.0, "1")]
+        invalid += [dict(price_step=s) for s in (0, 1000001, True, 1.5, "100")]
+        invalid += [dict(target_profit_percent=p) for p in (-1, True, None, "NaN", "Infinity", 10001, "0.1234567", "1e-999999999", "0." + "1" * 130)]
+        invalid += [dict(upper_profit_percent=p) for p in (-1, True, "NaN", 10001, "0.1234567")]
+        invalid += [dict(ticker=t) for t in ("XYZ", "MISSING", "<script>", None)]
+        invalid += [dict(scope="unknown")]
+        for changed in invalid:
+            kwargs = dict(scope=scope, ticker="ABC", parts=1, target_profit_percent=1, upper_profit_percent=2, price_step=100)
+            kwargs.update(changed)
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                service.build_sell_plan(self.store, **kwargs)
+        with self.assertRaises(ValueError):
+            service.build_sell_plan(self.store, scope, "ABC", 1, 10, 9)
+        self.assertEqual(service.build_report(self.store, scope), before)
 
 
 if __name__ == "__main__":

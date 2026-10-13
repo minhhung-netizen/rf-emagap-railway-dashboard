@@ -5,10 +5,12 @@
   const MAX_FILE_BYTES = 10 * 1024 * 1024;
   const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character]));
   const number = value => value == null ? '—' : Number(value).toLocaleString('vi-VN', {maximumFractionDigits: 2});
+  const percent = value => value == null ? '—' : Number(value).toLocaleString('vi-VN', {maximumFractionDigits: 6});
   const date = value => /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? `${value.slice(8, 10)}/${value.slice(5, 7)}/${value.slice(0, 4)}` : '—';
   const statuses = {buy_remaining:'Còn dư mua',base_only:'Chỉ còn cơ sở',closed:'Hết dư mua'};
   let identity = null, epoch = 0, readVersion = 0, fileVersion = 0;
   let administrator = false, selectedScope = '', report = null, selectedFile = null, preview = null, busy = false, pendingDelete = null;
+  let feeDraftScope = '', feeDirty = false, feeSignature = '', plannerScope = '', plan = null, planVersion = 0, planBusy = false;
   const signatures = new Map(), drafts = new Map();
   const rowKey = row => JSON.stringify([row.scope, row.trade_date, row.ticker]);
   const validIdentity = current => current === epoch && identity !== null;
@@ -43,11 +45,12 @@
   function setBusy(value) {
     busy = value;
     panel.setAttribute('aria-busy', String(value));
-    panel.querySelectorAll('[data-file], [data-preview-button], [data-note-save], [data-note-input], [data-replace], [data-base-ticker], [data-base-quantity], [data-base-edit], [data-base-reset]').forEach(element => {element.disabled = value || !!pendingDelete;});
+    panel.querySelectorAll('[data-file], [data-preview-button], [data-note-save], [data-note-input], [data-replace], [data-base-ticker], [data-base-quantity], [data-base-edit], [data-base-reset], [data-buy-fee], [data-sell-fee], [data-sell-tax]').forEach(element => {element.disabled = value || !!pendingDelete;});
     panel.querySelector('[data-scope]').disabled = value;
     syncImportButton();
     syncBaseForm();
     syncDeleteControls();
+    syncFeeControls();syncPlanControls();
   }
   function syncImportButton() {
     const button = panel.querySelector('[data-import-button]');
@@ -77,16 +80,18 @@
   const tickerCell = ticker => `<th scope="row" class="reconciliationTicker">${esc(ticker)}</th>`;
   function mount() {
     panel.innerHTML = `<div class="panelHead"><div><p class="eyebrow">Báo cáo khớp lệnh • VND • theo từng tài khoản</p><h2>Đối chiếu khớp lệnh</h2><p class="mutedText">Theo dõi dư mua vượt lượng cổ phiếu cơ sở, giảm dư mua khi bán và chuyển giá vốn bình quân sang phiên tiếp theo.</p></div></div>
-      <details class="reconciliationMethod"><summary>Cách tính và phạm vi dữ liệu</summary><p>Lượng cơ sở là cổ phiếu đã có sẵn, giữ riêng từ đầu kỳ theo dõi. Ví dụ CII có cơ sở 10.000 CP: mua thêm 2.000 CP thì dư mua là 2.000 CP, tổng theo dõi 12.000 CP; bán 500 CP thì dư mua còn 1.500 CP, tổng theo dõi 11.500 CP.</p><p>Cùng mã, cùng ngày: đối ứng mua/bán trước. Dư mua được cộng vào tồn vượt cơ sở, theo giá mua bình quân ngày; dư bán giảm tồn vượt cơ sở từ các ngày trước và giữ nguyên giá vốn bình quân. Chỉ bỏ qua lượng bán vượt phần dư này, không giảm cơ sở và không ghi nhận tồn âm.</p><p>Khi hết dư mua, giá vốn phần dư được xóa; lần mua tiếp theo bắt đầu tính bình quân mới. Giá vốn dùng giá trị khớp chia cho số lượng, chưa gồm phí/thuế và không gồm cổ phiếu cơ sở. Thay đổi cơ sở áp dụng từ báo cáo đầu tiên, không trừ vào các giao dịch mua đã nhập. Các báo cáo cũ được tính lại theo cùng quy tắc. Dữ liệu tách riêng từng tài khoản và không tự cập nhật sổ giao dịch hay NAV.</p></details>
+      <details class="reconciliationMethod"><summary>Cách tính và phạm vi dữ liệu</summary><p>Lượng cơ sở là cổ phiếu đã có sẵn, giữ riêng từ đầu kỳ theo dõi. Ví dụ CII có cơ sở 10.000 CP: mua thêm 2.000 CP thì dư mua là 2.000 CP, tổng theo dõi 12.000 CP; bán 500 CP thì dư mua còn 1.500 CP, tổng theo dõi 11.500 CP.</p><p>Cùng mã, cùng ngày: đối ứng mua/bán trước. Dư mua được cộng vào tồn vượt cơ sở, theo giá mua bình quân ngày; dư bán giảm tồn vượt cơ sở từ các ngày trước và giữ nguyên giá vốn bình quân. Chỉ bỏ qua lượng bán vượt phần dư này, không giảm cơ sở và không ghi nhận tồn âm.</p><p>Khi hết dư mua, giá vốn phần dư được xóa; lần mua tiếp theo bắt đầu tính bình quân mới. Giá mua BQ ngày là giá khớp trước phí. Giá vốn phần dư gồm phí mua đã cấu hình, không gồm cổ phiếu cơ sở. Phí bán và thuế/chi phí bán khác được trừ khi ước tính lãi ròng của kế hoạch bán. Lưu phí mua sẽ tính lại toàn bộ lịch sử đã nhập. Thay đổi cơ sở áp dụng từ báo cáo đầu tiên, không trừ vào các giao dịch mua đã nhập. Dữ liệu tách riêng từng tài khoản và không tự cập nhật sổ giao dịch hay NAV.</p></details>
       <section class="reconciliationImport" data-import-area ${administrator ? '' : 'hidden'} aria-labelledby="reconciliationImportTitle"><h3 id="reconciliationImportTitle">Nhập báo cáo Excel</h3><p class="mutedText">Chọn tệp .xlsx theo mẫu báo cáo khớp lệnh theo mã. Xem trước để kiểm tra tài khoản, ngày và các mã trước khi lưu. Tệp tối đa 10 MB.</p><div class="reconciliationUploadActions"><label for="reconciliationFile">Báo cáo khớp lệnh<input id="reconciliationFile" data-file type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-describedby="reconciliationFileStatus"></label><button type="button" class="smallButton" data-preview-button>Xem trước</button><button type="button" class="smallButton" data-import-button disabled>Lưu báo cáo</button></div><p id="reconciliationFileStatus" class="mutedText" data-file-status>Chưa chọn tệp.</p><label class="reconciliationReplace" data-replace-label hidden><input data-replace type="checkbox">Thay toàn bộ báo cáo của tài khoản và ngày này, đồng thời tính lại các ngày sau</label><div data-preview hidden></div></section>
       <p data-status role="status" aria-live="polite" class="reconciliationStatus">Đang tải dữ liệu…</p>
       <div class="reconciliationFilters"><label>Tài khoản<select data-scope aria-label="Tài khoản báo cáo"><option value="">Chưa có tài khoản</option></select></label><label>Tìm mã<input data-ticker type="search" placeholder="Ví dụ: FPT" autocomplete="off" maxlength="30"></label><label>Từ ngày<input data-from type="date"></label><label>Đến ngày<input data-to type="date"></label><button type="button" class="smallButton ghostButton" data-reset-filters>Xóa bộ lọc</button></div>
       <p class="mutedText" data-scope-context></p><div class="fundKpis reconciliationKpis" data-totals></div><div data-warnings></div>
+      <section class="reconciliationSection" aria-labelledby="reconciliationFeesTitle"><div class="panelHead"><div><h3 id="reconciliationFeesTitle">Phí giao dịch theo tài khoản</h3><p class="mutedText">Nhập tỷ lệ bạn muốn dùng để tính giá vốn và lãi ròng. Phí mua áp dụng cho toàn bộ lịch sử; phí bán và chi phí bán khác dùng trong kế hoạch bán.</p></div></div><p class="reconciliationNotice" data-fee-summary>Chưa cấu hình phí.</p><div data-fee-admin ${administrator ? '' : 'hidden'}><form class="reconciliationFeeForm" data-fee-form><label>Phí mua (%)<input data-buy-fee type="number" min="0" max="99.999999" step="0.000001" inputmode="decimal" value="0" required></label><label>Phí bán (%)<input data-sell-fee type="number" min="0" max="99.999999" step="0.000001" inputmode="decimal" value="0" required></label><label>Thuế/chi phí bán khác (%)<input data-sell-tax type="number" min="0" max="99.999999" step="0.000001" inputmode="decimal" value="0" required></label><button type="submit" class="smallButton" data-fee-save disabled>Lưu phí và tính lại</button></form><p class="mutedText" data-fee-context>Chọn tài khoản trước khi lưu phí. Không đặt sẵn tỷ lệ phí hay thuế.</p></div></section>
       <section class="reconciliationSection" aria-labelledby="reconciliationBasesTitle"><div class="panelHead"><div><h3 id="reconciliationBasesTitle">Cổ phiếu cơ sở giữ riêng</h3><p class="mutedText">Lượng đã có sẵn cho tài khoản đang chọn, không tính giá vốn. Đặt 0 để bỏ cơ sở của mã.</p></div></div><div data-base-admin ${administrator ? '' : 'hidden'}><form class="reconciliationBaseForm" data-base-form><label>Mã cổ phiếu<input data-base-ticker type="text" placeholder="Ví dụ: CII" autocomplete="off" maxlength="20" required></label><label>Lượng cơ sở (CP)<input data-base-quantity type="number" min="0" max="1000000000000" step="1" inputmode="numeric" placeholder="10000" required></label><button type="submit" class="smallButton" data-base-save disabled>Lưu cơ sở</button><button type="button" class="smallButton ghostButton" data-base-reset>Xóa nhập liệu</button></form><p class="mutedText" data-base-context>Nhập báo cáo trước để chọn tài khoản và thiết lập cơ sở.</p></div><div data-bases></div></section>
       <section class="reconciliationSection" aria-labelledby="reconciliationPositionsTitle"><div class="panelHead"><div><h3 id="reconciliationPositionsTitle">Tồn vượt cơ sở lũy kế</h3><p class="mutedText">Tổng theo dõi = cơ sở giữ riêng + dư mua còn lại từ báo cáo đã nhập. Giá vốn chỉ tính phần dư mua. Bộ lọc ngày chỉ áp dụng bảng thống kê bên dưới.</p></div><span class="mutedText" data-positions-count></span></div><div data-positions></div></section>
+      <section class="reconciliationSection" aria-labelledby="reconciliationPlanTitle"><div class="panelHead"><div><h3 id="reconciliationPlanTitle">Kế hoạch bán phần dư mua</h3><p class="mutedText">Chia đều toàn bộ phần dư mua còn lại của một mã, giữ riêng cơ sở. Mục tiêu lãi ròng tính trên giá vốn bình quân đã gồm phí mua; phí bán và chi phí bán khác được trừ khỏi tiền thu về. Nếu chỉ chia 1 phần, dùng mục tiêu từ.</p></div></div><form class="reconciliationPlanForm" data-plan-form><label>Mã còn dư mua<select data-plan-ticker required><option value="">Chưa có mã còn dư mua</option></select></label><label>Số phần bán<input data-plan-parts type="number" min="1" max="100" step="1" value="3" required></label><label>Lãi ròng mục tiêu từ (%)<input data-plan-target type="number" min="0" max="10000" step="0.000001" value="5" required></label><label>Đến (%) — tùy chọn<input data-plan-upper type="number" min="0" max="10000" step="0.000001" placeholder="Bằng mục tiêu từ"></label><label>Bước làm tròn giá (VND)<input data-plan-step type="number" min="1" max="1000000" step="1" value="100" required></label><button type="submit" class="smallButton" data-plan-calculate disabled>Tính kế hoạch bán</button></form><p class="mutedText" data-plan-context>Chọn mã có dư mua để lập kế hoạch.</p><p class="mutedText">Đây là ước tính theo giá khớp giả định và phí đã lưu. Kế hoạch có thể gồm số lượng lẻ; giới hạn giá và quy tắc đặt lệnh chưa được kiểm tra. Không gửi lệnh tới công ty chứng khoán.</p><p class="reconciliationStatus" data-plan-status role="status" aria-live="polite"></p><div data-plan-result></div></section>
       <section class="reconciliationSection" aria-labelledby="reconciliationDailyTitle"><div class="panelHead"><div><h3 id="reconciliationDailyTitle">Đối chiếu mua/bán từng ngày theo mã</h3><p class="mutedText">Hiển thị cả ngày mua và bán. Đối ứng = phần mua và bán khớp cùng ngày. Bán trừ dư cũ giữ giá vốn bình quân; phần bán vượt dư cũ được bỏ qua. Giá mua BQ ngày và giá vốn BQ phần dư hiển thị bằng VND.</p></div><span class="mutedText" data-rows-count></span></div><div data-rows></div></section>
       <section class="reconciliationDeleteConfirmation" data-delete-confirmation role="region" aria-labelledby="reconciliationDeleteTitle" hidden><h3 id="reconciliationDeleteTitle" data-delete-title></h3><p data-delete-detail></p><p data-delete-impact></p><div class="reconciliationDeleteActions"><button type="button" class="smallButton ghostButton" data-delete-cancel>Hủy</button><button type="button" class="smallButton reconciliationDangerButton" data-delete-confirm>Xác nhận xóa</button></div></section>
-      <details class="reconciliationSection"><summary>Lịch sử báo cáo đã nhập</summary><div class="reconciliationHistoryActions" data-delete-account-area ${administrator ? '' : 'hidden'}><p class="mutedText">Có thể xóa riêng từng báo cáo hoặc xóa toàn bộ báo cáo, ghi chú và cơ sở của tài khoản đang chọn.</p><button type="button" class="smallButton reconciliationDangerButton" data-delete-account disabled>Xóa toàn bộ dữ liệu tài khoản</button></div><div data-imports></div></details>`;
+      <details class="reconciliationSection"><summary>Lịch sử báo cáo đã nhập</summary><div class="reconciliationHistoryActions" data-delete-account-area ${administrator ? '' : 'hidden'}><p class="mutedText">Có thể xóa riêng từng báo cáo hoặc xóa toàn bộ báo cáo, ghi chú, cơ sở và phí của tài khoản đang chọn.</p><button type="button" class="smallButton reconciliationDangerButton" data-delete-account disabled>Xóa toàn bộ dữ liệu tài khoản</button></div><div data-imports></div></details>`;
     panel.querySelector('[data-file]').addEventListener('change', event => {
       selectedFile = event.target.files[0] || null; preview = null; fileVersion++;
       panel.querySelector('[data-preview]').hidden = true;
@@ -99,9 +104,13 @@
     panel.querySelector('[data-preview-button]').addEventListener('click', previewFile);
     panel.querySelector('[data-import-button]').addEventListener('click', importFile);
     panel.querySelector('[data-replace]').addEventListener('change', syncImportButton);
-    panel.querySelector('[data-scope]').addEventListener('change', event => {if (busy) return;selectedScope = event.target.value;resetBaseForm();syncBaseForm();load(true);});
+    panel.querySelector('[data-scope]').addEventListener('change', event => {if (busy) return;selectedScope = event.target.value;resetBaseForm();invalidatePlan();syncBaseForm();syncFeeControls();syncPlanControls();load(true);});
     panel.querySelector('[data-base-form]').addEventListener('submit', saveBase);
     panel.querySelector('[data-base-reset]').addEventListener('click', () => {if (!busy) resetBaseForm();});
+    panel.querySelector('[data-fee-form]').addEventListener('submit', saveFees);
+    ['[data-buy-fee]','[data-sell-fee]','[data-sell-tax]'].forEach(selector => panel.querySelector(selector).addEventListener('input', () => {feeDirty = true;invalidatePlan('Phí đang được chỉnh sửa. Lưu phí trước khi tính kế hoạch bán.');syncFeeControls();}));
+    panel.querySelector('[data-plan-form]').addEventListener('submit', calculatePlan);
+    ['[data-plan-ticker]','[data-plan-parts]','[data-plan-target]','[data-plan-upper]','[data-plan-step]'].forEach(selector => panel.querySelector(selector).addEventListener('input', () => {invalidatePlan('Thiết lập đã thay đổi. Tính lại kế hoạch bán.');syncPlanControls();}));
     panel.querySelector('[data-delete-account]').addEventListener('click', event => beginDelete('account', event.currentTarget));
     panel.querySelector('[data-delete-cancel]').addEventListener('click', cancelDelete);
     panel.querySelector('[data-delete-confirm]').addEventListener('click', confirmDelete);
@@ -113,6 +122,7 @@
     panel.addEventListener('click', actionClick);
     syncBaseForm();
     syncDeleteControls();
+    syncFeeControls();syncPlanControls();
   }
   function validateFile() {
     if (!selectedFile) throw new Error('Chọn tệp Excel trước khi xem dữ liệu.');
@@ -146,7 +156,7 @@
     const replace = preview.import_state === 'conflict' && panel.querySelector('[data-replace]').checked;
     if (preview.import_state === 'conflict' && !replace) return;
     try {
-      setBusy(true);status('Đang lưu báo cáo và tính lại số dư…');
+      invalidatePlan('Báo cáo đang được cập nhật. Tính lại kế hoạch bán sau khi lưu.');setBusy(true);status('Đang lưu báo cáo và tính lại số dư…');
       const result = await request('/import' + (replace ? '?replace_existing=true' : ''), uploadOptions(file));
       if (!validIdentity(current)) return;
       if (selectedScope !== scope) resetBaseForm();
@@ -202,7 +212,7 @@
     if (!/^[A-Z0-9][A-Z0-9._-]{0,19}$/.test(ticker)) {status('Nhập mã cổ phiếu hợp lệ để thiết lập cơ sở.', true);return;}
     if (!/^\d+$/.test(rawQuantity) || !Number.isSafeInteger(quantity) || quantity < 0 || quantity > 1000000000000) {status('Lượng cơ sở phải là số nguyên từ 0 đến 1.000.000.000.000 CP.', true);return;}
     try {
-      setBusy(true);status(`Đang lưu cơ sở ${ticker}…`);
+      invalidatePlan('Cơ sở đang được cập nhật. Tính lại kế hoạch bán sau khi lưu.');setBusy(true);status(`Đang lưu cơ sở ${ticker}…`);
       await request('/bases', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope,ticker,base_quantity:quantity})});
       if (!validIdentity(current) || selectedScope !== scope) return;
       resetBaseForm();await load(false, true);
@@ -218,7 +228,7 @@
     const input = [...panel.querySelectorAll('[data-note-input]')].find(item => item.dataset.noteInput === key);
     const current = epoch, note = input.value;
     try {
-      setBusy(true);status(`Đang lưu ghi chú ${row.ticker} ngày ${date(row.trade_date)}…`);
+      invalidatePlan('Ghi chú đang được cập nhật. Tính lại kế hoạch bán sau khi lưu.');setBusy(true);status(`Đang lưu ghi chú ${row.ticker} ngày ${date(row.trade_date)}…`);
       await request('/notes', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope:row.scope,trade_date:row.trade_date,ticker:row.ticker,note})});
       if (!validIdentity(current)) return;
       drafts.delete(key);await load(false, true);
@@ -226,9 +236,126 @@
     } catch (error) {if (validIdentity(current)) status(error.message, true);}
     finally {if (validIdentity(current)) setBusy(false);}
   }
+  function syncFeeControls() {
+    const available = !!selectedScope && report?.selected_scope === selectedScope;
+    const disabled = busy || !!pendingDelete || !administrator || !available;
+    panel.querySelector('[data-fee-save]').disabled = disabled;
+    ['[data-buy-fee]','[data-sell-fee]','[data-sell-tax]'].forEach(selector => {panel.querySelector(selector).disabled = disabled;});
+    panel.querySelector('[data-fee-context]').textContent = !available ? 'Chọn tài khoản trước khi lưu phí. Không đặt sẵn tỷ lệ phí hay thuế.' : feeDirty ? 'Có thay đổi chưa lưu. Lưu phí để tính lại giá vốn và sử dụng trong kế hoạch bán.' : 'Phí đã lưu được dùng cho tài khoản đang chọn. Lưu phí mua sẽ tính lại toàn bộ lịch sử đã nhập.';
+  }
+  function renderFeeSettings() {
+    const scope = report?.selected_scope || '', fees = report?.fees || {};
+    const signature = JSON.stringify([fees.buy_fee_percent || 0,fees.sell_fee_percent || 0,fees.sell_tax_percent || 0,!!fees.configured]);
+    if (feeDraftScope !== scope || (!feeDirty && signature !== feeSignature)) {
+      panel.querySelector('[data-buy-fee]').value = String(fees.buy_fee_percent || 0);
+      panel.querySelector('[data-sell-fee]').value = String(fees.sell_fee_percent || 0);
+      panel.querySelector('[data-sell-tax]').value = String(fees.sell_tax_percent || 0);
+      feeDraftScope = scope;feeDirty = false;
+    }
+    feeSignature = signature;
+    panel.querySelector('[data-fee-summary]').textContent = !scope ? 'Chưa chọn tài khoản. Chưa cấu hình phí.' : !fees.configured ? 'Chưa cấu hình phí. Giá vốn và kế hoạch hiện dùng 0% phí mua, 0% phí bán và 0% chi phí bán khác; hãy nhập tỷ lệ bạn muốn áp dụng.' : `Phí đã lưu: mua ${percent(fees.buy_fee_percent)}% • bán ${percent(fees.sell_fee_percent)}% • thuế/chi phí bán khác ${percent(fees.sell_tax_percent)}%. Giá vốn phần dư đã gồm phí mua này.`;
+    syncFeeControls();
+  }
+  function decimalInput(selector, label, maximum, exclusive = false) {
+    const raw = panel.querySelector(selector).value.trim(), value = Number(raw);
+    if (!/^(?:\d+(?:\.\d{1,6})?|\.\d{1,6})$/.test(raw) || !Number.isFinite(value) || value < 0 || (exclusive ? value >= maximum : value > maximum)) throw new Error(`${label} phải từ 0 ${exclusive ? 'đến dưới' : 'đến'} ${maximum}, tối đa 6 chữ số thập phân.`);
+    return value;
+  }
+  async function saveFees(event) {
+    event.preventDefault();
+    if (!administrator || busy || pendingDelete) return;
+    const current = epoch, scope = selectedScope;
+    if (!scope || report?.selected_scope !== scope) {status('Chờ tải xong tài khoản trước khi lưu phí.', true);return;}
+    try {
+      const buy = decimalInput('[data-buy-fee]', 'Phí mua', 100, true), sell = decimalInput('[data-sell-fee]', 'Phí bán', 100, true), tax = decimalInput('[data-sell-tax]', 'Thuế/chi phí bán khác', 100, true);
+      if (Math.round(sell * 1000000) + Math.round(tax * 1000000) >= 100000000) throw new Error('Tổng phí bán và thuế/chi phí bán khác phải nhỏ hơn 100%.');
+      const baseDraft = {ticker:panel.querySelector('[data-base-ticker]').value,quantity:panel.querySelector('[data-base-quantity]').value};
+      readVersion++;invalidatePlan('Phí đang được cập nhật. Tính lại kế hoạch bán sau khi lưu.');setBusy(true);status('Đang lưu phí và tính lại giá vốn toàn bộ lịch sử…');
+      await request('/fees', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({scope,buy_fee_percent:buy,sell_fee_percent:sell,sell_tax_percent:tax})});
+      if (!validIdentity(current)) return;
+      feeDirty = false;invalidateReport();
+      const refreshed = await load(false, true, scope);
+      if (!validIdentity(current)) return;
+      if (refreshed && report?.selected_scope === scope) {
+        panel.querySelector('[data-base-ticker]').value = baseDraft.ticker;
+        panel.querySelector('[data-base-quantity]').value = baseDraft.quantity;
+      }
+      status(refreshed ? 'Đã lưu phí và tính lại giá vốn toàn bộ lịch sử. Tính lại kế hoạch bán để dùng số liệu mới.' : 'Đã lưu phí nhưng chưa tải được giá vốn mới. Hãy tải lại trang.', !refreshed);
+    } catch (error) {if (validIdentity(current)) status(error.message, true);}
+    finally {if (validIdentity(current)) setBusy(false);}
+  }
+  function syncPlanControls() {
+    const position = (report?.positions || []).find(row => row.ticker === panel.querySelector('[data-plan-ticker]').value && row.quantity > 0);
+    const available = !!selectedScope && report?.selected_scope === selectedScope;
+    const disabled = busy || !!pendingDelete || planBusy || !available;
+    ['[data-plan-ticker]','[data-plan-parts]','[data-plan-target]','[data-plan-upper]','[data-plan-step]'].forEach(selector => {panel.querySelector(selector).disabled = disabled;});
+    panel.querySelector('[data-plan-calculate]').disabled = disabled || !position || (administrator && feeDirty);
+    panel.querySelector('[data-plan-context]').textContent = !available ? 'Chọn tài khoản trước khi lập kế hoạch bán.' : administrator && feeDirty ? 'Phí đang có thay đổi chưa lưu. Lưu phí trước khi tính kế hoạch bán.' : position ? `${position.ticker}: chia đều toàn bộ ${number(position.quantity)} CP dư mua còn lại; không bán cổ phiếu cơ sở. Kế hoạch dùng các tỷ lệ phí đã lưu.` : 'Chọn mã còn dư mua. Mã đã hết dư mua không được tự đổi sang mã khác.';
+  }
+  function invalidatePlan(message = '') {
+    planVersion++;plan = null;planBusy = false;
+    panel.querySelector('[data-plan-result]').replaceChildren();signatures.delete('[data-plan-result]');
+    panel.querySelector('[data-plan-status]').textContent = message;
+    panel.querySelector('[data-plan-status]').classList.toggle('reconciliationError', false);
+    syncPlanControls();
+  }
+  function renderPlannerInputs() {
+    const scope = report?.selected_scope || '', select = panel.querySelector('[data-plan-ticker]');
+    const positions = (report?.positions || []).filter(row => row.quantity > 0);
+    const newScope = plannerScope !== scope;
+    if (newScope) {
+      plannerScope = scope;select.value = '';
+      panel.querySelector('[data-plan-parts]').value = positions.length && positions[0].quantity < 3 ? '1' : '3';
+      panel.querySelector('[data-plan-target]').value = '5';panel.querySelector('[data-plan-upper]').value = '';panel.querySelector('[data-plan-step]').value = '100';
+      invalidatePlan();
+    }
+    const previous = select.value, selectedExists = positions.some(row => row.ticker === previous);
+    const missing = previous && !selectedExists ? `<option value="${esc(previous)}" disabled>${esc(previous)} — không còn dư mua</option>` : '';
+    const html = positions.map(row => `<option value="${esc(row.ticker)}">${esc(row.ticker)} • ${number(row.quantity)} CP</option>`).join('');
+    const options = missing + html || '<option value="">Chưa có mã còn dư mua</option>';
+    if (signatures.get('plan-tickers') !== options) {select.innerHTML = options;signatures.set('plan-tickers', options);}
+    select.value = previous || (positions[0]?.ticker || '');
+    syncPlanControls();
+  }
+  async function calculatePlan(event) {
+    event.preventDefault();
+    if (busy || pendingDelete || planBusy || (administrator && feeDirty)) return;
+    const scope = selectedScope, current = epoch, revision = report?.revision, ticker = panel.querySelector('[data-plan-ticker]').value;
+    const position = (report?.positions || []).find(row => row.ticker === ticker && row.quantity > 0);
+    if (!scope || report?.selected_scope !== scope || !position) {panel.querySelector('[data-plan-status]').textContent = 'Chọn mã có dư mua trong tài khoản đã tải xong.';return;}
+    let version;
+    try {
+      const partsRaw = panel.querySelector('[data-plan-parts]').value.trim(), parts = Number(partsRaw), stepRaw = panel.querySelector('[data-plan-step]').value.trim(), step = Number(stepRaw);
+      if (!/^\d+$/.test(partsRaw) || !Number.isSafeInteger(parts) || parts < 1 || parts > 100 || parts > position.quantity) throw new Error('Số phần bán phải là số nguyên từ 1 đến 100 và không vượt số cổ phiếu dư mua.');
+      if (!/^\d+$/.test(stepRaw) || !Number.isSafeInteger(step) || step < 1 || step > 1000000) throw new Error('Bước làm tròn giá phải là số nguyên từ 1 đến 1.000.000 VND.');
+      const lower = decimalInput('[data-plan-target]', 'Lãi ròng mục tiêu', 10000);
+      const upperRaw = panel.querySelector('[data-plan-upper]').value.trim(), upper = upperRaw ? decimalInput('[data-plan-upper]', 'Lãi ròng mục tiêu đến', 10000) : null;
+      if (upper !== null && upper < lower) throw new Error('Mục tiêu đến phải lớn hơn hoặc bằng mục tiêu từ.');
+      const parameters = {scope,ticker,parts,target_profit_percent:lower,price_step:step};if (upper !== null) parameters.upper_profit_percent = upper;
+      version = ++planVersion;plan = null;planBusy = true;panel.querySelector('[data-plan-result]').replaceChildren();signatures.delete('[data-plan-result]');syncPlanControls();
+      panel.querySelector('[data-plan-status]').textContent = 'Đang tính giá bán và lãi ròng ước tính…';
+      const result = await request('/sell-plan?' + Object.entries(parameters).map(([key,value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join('&'));
+      if (!validIdentity(current) || version !== planVersion || selectedScope !== scope) return;
+      if (report?.revision !== revision || result.revision !== revision) {invalidatePlan('Dữ liệu tài khoản đã thay đổi. Tải lại dữ liệu rồi tính kế hoạch mới.');return;}
+      plan = result;renderPlan();panel.querySelector('[data-plan-status]').textContent = 'Đã tính kế hoạch bán ước tính. Chưa gửi lệnh giao dịch.';
+      panel.querySelector('[data-plan-status]').classList.toggle('reconciliationError', false);
+    } catch (error) {
+      if (validIdentity(current) && (version === undefined || version === planVersion)) {
+        panel.querySelector('[data-plan-status]').textContent = error.message;
+        panel.querySelector('[data-plan-status]').classList.toggle('reconciliationError', true);
+      }
+    } finally {if (validIdentity(current) && version === planVersion) {planBusy = false;syncPlanControls();}}
+  }
+  function renderPlan() {
+    if (!plan) return;
+    const totals = plan.totals || {}, fee = plan.fees || {};
+    const percentCell = value => `<td class="numeric">${percent(value)}%</td>`;
+    const html = `<div class="reconciliationPlanSummary"><h4>${esc(plan.ticker)} • ${number(plan.quantity)} CP dư mua • giá vốn BQ ${number(plan.average_cost)} VND/CP</h4><p>Khoảng giá theo mục tiêu: ${number(plan.price_min)}${plan.price_max !== plan.price_min ? ` – ${number(plan.price_max)}` : ''} VND/CP • làm tròn lên theo bước ${number(plan.price_step)} VND.</p><p class="mutedText">Phí mua ${percent(fee.buy_fee_percent || 0)}% đã nằm trong giá vốn; phí bán ${percent(fee.sell_fee_percent || 0)}% và chi phí bán khác ${percent(fee.sell_tax_percent || 0)}% được trừ khỏi tiền thu về.${fee.configured ? '' : ' Chưa cấu hình phí; các tỷ lệ đang dùng là 0%.'}</p></div>` + table([{label:'Phần bán'},{label:'SL (CP)',numeric:true},{label:'Mục tiêu lãi ròng (%)',numeric:true},{label:'Giá bán (VND/CP)',numeric:true},{label:'Giá vốn phân bổ (VND)',numeric:true},{label:'Giá trị bán (VND)',numeric:true},{label:'Phí bán (VND)',numeric:true},{label:'Chi phí bán khác (VND)',numeric:true},{label:'Thu về ròng (VND)',numeric:true},{label:'Lãi ròng (VND)',numeric:true},{label:'Lãi ròng (%)',numeric:true}], (plan.orders || []).map(order => `<tr>${tickerCell(`Phần ${order.part}`)}${numericCell(order.quantity)}${percentCell(order.target_profit_percent)}${numericCell(order.price)}${numericCell(order.allocated_cost)}${numericCell(order.gross_proceeds)}${numericCell(order.sell_fee)}${numericCell(order.sell_tax)}${numericCell(order.net_proceeds)}${numericCell(order.net_profit)}${percentCell(order.net_profit_percent)}</tr>`), 'Không có phần bán.', 'Kế hoạch chia đều phần dư mua và lãi ròng sau phí') + `<div class="fundKpis reconciliationKpis reconciliationPlanTotals">${[['Tổng bán (CP)',totals.quantity],['Thu về ròng (VND)',totals.net_proceeds],['Lãi ròng (VND)',totals.net_profit],['Lãi ròng trên giá vốn (%)',totals.net_profit_percent]].map(([label,value]) => `<article><span>${esc(label)}</span><strong>${label.includes('(%)') ? percent(value) : number(value)}</strong></article>`).join('')}</div>`;
+    replaceSection('[data-plan-result]', html);
+  }
   function syncDeleteControls() {
     const available = administrator && !!selectedScope && report?.selected_scope === selectedScope;
-    const hasData = (report?.imports || []).length > 0 || (report?.bases || []).length > 0;
+    const hasData = (report?.imports || []).length > 0 || (report?.bases || []).length > 0 || !!report?.fees?.configured;
     panel.querySelector('[data-delete-account]').disabled = busy || !!pendingDelete || !available || !hasData || !report?.revision;
     panel.querySelectorAll('[data-delete-import]').forEach(button => {button.disabled = busy || !!pendingDelete || !available || !(report?.imports || []).find(item => String(item.id) === button.dataset?.deleteImport)?.revision;});
     panel.querySelector('[data-delete-confirm]').disabled = busy || !administrator || !pendingDelete;
@@ -243,8 +370,8 @@
     if (!account || !revision || (kind === 'import' && !item)) {status('Tải lại dữ liệu trước khi chọn báo cáo cần xóa.', true);return;}
     pendingDelete = Object.freeze({kind,scope:selectedScope,account_label:account.account_label,revision,id:item?.id,trade_date:item?.trade_date,filename:item?.filename});
     panel.querySelector('[data-delete-title]').textContent = kind === 'import' ? `Xóa báo cáo ngày ${date(item.trade_date)}?` : `Xóa toàn bộ dữ liệu đối chiếu của tài khoản ${account.account_label}?`;
-    panel.querySelector('[data-delete-detail]').textContent = kind === 'import' ? `Tài khoản: ${account.account_label}. Ngày: ${date(item.trade_date)}. Tệp: ${item.filename}.` : `Tài khoản: ${account.account_label}. Bao gồm tất cả báo cáo đã nhập, ghi chú và lượng cổ phiếu cơ sở của tài khoản này.`;
-    panel.querySelector('[data-delete-impact]').textContent = kind === 'import' ? 'Báo cáo và ghi chú của ngày này sẽ bị xóa; các ngày còn lại được tính lại. Lượng cơ sở giữ nguyên. Có thể nhập lại tệp Excel để khôi phục giao dịch, nhưng ghi chú đã xóa không tự khôi phục.' : 'Báo cáo, ghi chú và cơ sở của tài khoản này sẽ bị xóa. Muốn theo dõi lại, cần nhập lại Excel và thiết lập cơ sở. Các tài khoản khác được giữ nguyên.';
+    panel.querySelector('[data-delete-detail]').textContent = kind === 'import' ? `Tài khoản: ${account.account_label}. Ngày: ${date(item.trade_date)}. Tệp: ${item.filename}.` : `Tài khoản: ${account.account_label}. Bao gồm tất cả báo cáo đã nhập, ghi chú, lượng cổ phiếu cơ sở và cấu hình phí của tài khoản này.`;
+    panel.querySelector('[data-delete-impact]').textContent = kind === 'import' ? 'Báo cáo và ghi chú của ngày này sẽ bị xóa; các ngày còn lại được tính lại. Lượng cơ sở và cấu hình phí giữ nguyên. Có thể nhập lại tệp Excel để khôi phục giao dịch, nhưng ghi chú đã xóa không tự khôi phục.' : 'Báo cáo, ghi chú, cơ sở và cấu hình phí của tài khoản này sẽ bị xóa. Muốn theo dõi lại, cần nhập lại Excel, thiết lập cơ sở và phí. Các tài khoản khác được giữ nguyên.';
     panel.querySelector('[data-delete-confirm]').textContent = kind === 'import' ? 'Xác nhận xóa báo cáo' : 'Xác nhận xóa dữ liệu tài khoản';
     const confirmation = panel.querySelector('[data-delete-confirmation]');confirmation.hidden = false;
     setBusy(false);
@@ -283,6 +410,7 @@
     }
   }
   function invalidateReport() {
+    invalidatePlan('Dữ liệu đang được cập nhật. Tính lại kế hoạch bán khi tải xong.');
     readVersion++;report = null;selectedScope = '';signatures.clear();
     panel.querySelector('[data-scope]').innerHTML = '<option value="">Đang cập nhật tài khoản…</option>';
     panel.querySelector('[data-scope]').value = '';
@@ -290,7 +418,7 @@
     panel.querySelector('[data-positions-count]').textContent = '';
     panel.querySelector('[data-rows-count]').textContent = '';
     ['[data-totals]','[data-warnings]','[data-bases]','[data-positions]','[data-rows]','[data-imports]'].forEach(selector => panel.querySelector(selector).replaceChildren());
-    syncBaseForm();syncDeleteControls();
+    syncBaseForm();syncDeleteControls();syncFeeControls();syncPlanControls();
   }
   async function confirmDelete() {
     if (!administrator || busy || !pendingDelete) return;
@@ -304,11 +432,11 @@
     };
     const path = target.kind === 'import' ? `/imports/${encodeURIComponent(target.id)}?scope=${encodeURIComponent(target.scope)}&expected_revision=${encodeURIComponent(target.revision)}` : `/accounts/${encodeURIComponent(target.scope)}?expected_revision=${encodeURIComponent(target.revision)}`;
     try {
-      readVersion++;setBusy(true);status('Đang xóa dữ liệu đã xác nhận và tính lại phần còn lại…');
+      readVersion++;invalidatePlan('Dữ liệu đang được xóa. Tính lại kế hoạch bán từ phần còn lại.');setBusy(true);status('Đang xóa dữ liệu đã xác nhận và tính lại phần còn lại…');
       await request(path, {method:'DELETE'});
       if (!validIdentity(current)) return;
       removeDeletedDrafts(target);resetFileSelection();
-      if (target.kind === 'account' && selectedScope === target.scope) resetBaseForm();
+      if (target.kind === 'account' && selectedScope === target.scope) {resetBaseForm();feeDraftScope = '';feeDirty = false;feeSignature = '';}
       closeDeleteConfirmation();invalidateReport();
       const refreshed = await load(false, true, preferredScope);
       if (validIdentity(current) && refreshed) restoreBaseDraft(true);
@@ -329,20 +457,21 @@
     const dailyRows = invalidRange ? [] : filteredRows(report.rows || [], criteria);
     const positions = (report.positions || []).filter(row => !criteria.ticker || row.ticker.includes(criteria.ticker));
     const scope = (report.scopes || []).find(item => item.scope === report.selected_scope);
-    panel.querySelector('[data-scope-context]').textContent = scope ? (scope.first_trade_date ? `Tài khoản ${scope.account_label} • dữ liệu đã nhập từ ${date(scope.first_trade_date)} đến ${date(scope.last_trade_date)} • cơ sở đã có sẵn + phần dư mua còn lại từ các báo cáo này.` : `Tài khoản ${scope.account_label} • chỉ còn cơ sở giữ riêng, chưa có báo cáo giao dịch.`) : 'Chưa có báo cáo. Nhập tệp Excel để bắt đầu đối chiếu.';
+    panel.querySelector('[data-scope-context]').textContent = scope ? (scope.first_trade_date ? `Tài khoản ${scope.account_label} • dữ liệu đã nhập từ ${date(scope.first_trade_date)} đến ${date(scope.last_trade_date)} • cơ sở đã có sẵn + phần dư mua còn lại từ các báo cáo này.` : `Tài khoản ${scope.account_label} • ${(report.bases || []).length ? 'chỉ còn cơ sở giữ riêng và cấu hình phí' : 'chỉ còn cấu hình phí'}, chưa có báo cáo giao dịch.`) : 'Chưa có báo cáo. Nhập tệp Excel để bắt đầu đối chiếu.';
     const totals = report.totals || {};
+    renderFeeSettings();renderPlannerInputs();
     replaceSection('[data-totals]', [['Báo cáo đã nhập',totals.imports_count],['Mã còn dư mua',totals.outstanding_tickers],['Dư mua vượt cơ sở (CP)',totals.outstanding_quantity],['Giá vốn phần dư (VND)',totals.total_cost],['Cơ sở giữ riêng (CP)',totals.base_quantity],['Tổng theo dõi (CP)',totals.total_quantity]].map(([label,value]) => `<article><span>${esc(label)}</span><strong>${number(value)}</strong></article>`).join(''));
     replaceSection('[data-warnings]', totals.ignored_sell_quantity > 0 ? `<p class="reconciliationNotice">${number(totals.ignored_sell_quantity)} CP bán vượt phần dư mua đã được bỏ qua; cơ sở giữ riêng không bị giảm.</p>` : '');
     const bases = (report.bases || []).filter(row => !criteria.ticker || row.ticker.includes(criteria.ticker));
     replaceSection('[data-bases]', table([{label:'Mã'},{label:'Cơ sở giữ riêng (CP)',numeric:true},...(administrator ? [{label:'Thiết lập'}] : [])], bases.map(base => `<tr>${tickerCell(base.ticker)}${numericCell(base.base_quantity)}${administrator ? `<td><button type="button" class="smallButton ghostButton" data-base-edit="${esc(base.ticker)}" ${busy || pendingDelete ? 'disabled' : ''}>Sửa cơ sở</button></td>` : ''}</tr>`), criteria.ticker ? 'Không có cơ sở phù hợp bộ lọc mã.' : 'Chưa thiết lập cơ sở. Mã không có cơ sở được tính từ 0 CP.', 'Lượng cổ phiếu cơ sở giữ riêng cho tài khoản đang chọn'));
     syncBaseForm();
     panel.querySelector('[data-positions-count]').textContent = `${number(positions.length)} / ${number((report.positions || []).length)} mã`;
-    replaceSection('[data-positions]', table([{label:'Mã'},{label:'Cơ sở (CP)',numeric:true},{label:'Dư mua còn lại (CP)',numeric:true},{label:'Tổng theo dõi (CP)',numeric:true},{label:'Giá vốn BQ phần dư (VND)',numeric:true},{label:'Giá vốn phần dư (VND)',numeric:true},{label:'Ngày đầu theo dõi'},{label:'Cập nhật gần nhất'},{label:'Trạng thái'}], positions.map(row => `<tr>${tickerCell(row.ticker)}${numericCell(row.base_quantity)}${numericCell(row.quantity)}${numericCell(row.total_quantity)}${numericCell(row.average_cost)}${numericCell(row.total_cost)}${textCell(date(row.first_trade_date))}${textCell(date(row.last_trade_date))}${textCell(statuses[row.status] || row.status || '—')}</tr>`), criteria.ticker ? 'Không có mã phù hợp bộ lọc.' : 'Chưa có cơ sở hoặc giao dịch trong tài khoản này.', 'Cổ phiếu cơ sở và dư mua còn lại, giá vốn chỉ tính phần dư'));
+    replaceSection('[data-positions]', table([{label:'Mã'},{label:'Cơ sở (CP)',numeric:true},{label:'Dư mua còn lại (CP)',numeric:true},{label:'Tổng theo dõi (CP)',numeric:true},{label:'Giá vốn BQ gồm phí mua (VND)',numeric:true},{label:'Giá vốn phần dư (VND)',numeric:true},{label:'Ngày đầu theo dõi'},{label:'Cập nhật gần nhất'},{label:'Trạng thái'}], positions.map(row => `<tr>${tickerCell(row.ticker)}${numericCell(row.base_quantity)}${numericCell(row.quantity)}${numericCell(row.total_quantity)}${numericCell(row.average_cost)}${numericCell(row.total_cost)}${textCell(date(row.first_trade_date))}${textCell(date(row.last_trade_date))}${textCell(statuses[row.status] || row.status || '—')}</tr>`), criteria.ticker ? 'Không có mã phù hợp bộ lọc.' : 'Chưa có cơ sở hoặc giao dịch trong tài khoản này.', 'Cổ phiếu cơ sở và dư mua còn lại, giá vốn gồm phí mua đã lưu, chỉ tính phần dư'));
     panel.querySelector('[data-rows-count]').textContent = invalidRange ? 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc.' : `${number(dailyRows.length)} / ${number((report.rows || []).length)} dòng`;
-    replaceSection('[data-rows]', table([{label:'Mã'},{label:'Ngày'},{label:'SL mua',numeric:true},{label:'SL bán',numeric:true},{label:'Đối ứng',numeric:true},{label:'Dư mua ngày',numeric:true},{label:'Bán trừ dư cũ',numeric:true},{label:'Bán vượt dư bỏ qua',numeric:true},{label:'Giá mua BQ ngày (VND)',numeric:true},{label:'Cơ sở (CP)',numeric:true},{label:'Dư mua trước ngày',numeric:true},{label:'Dư mua còn lại',numeric:true},{label:'Tổng theo dõi đầu ngày',numeric:true},{label:'Tổng theo dõi cuối ngày',numeric:true},{label:'Giá vốn BQ phần dư (VND)',numeric:true},{label:'Trạng thái cuối ngày'},{label:'Ghi chú'}], dailyRows.map(row => {
+    replaceSection('[data-rows]', table([{label:'Mã'},{label:'Ngày'},{label:'SL mua',numeric:true},{label:'SL bán',numeric:true},{label:'Đối ứng',numeric:true},{label:'Dư mua ngày',numeric:true},{label:'Bán trừ dư cũ',numeric:true},{label:'Bán vượt dư bỏ qua',numeric:true},{label:'Giá mua BQ trước phí (VND)',numeric:true},{label:'Giá mua BQ gồm phí (VND)',numeric:true},{label:'Phí mua phần dư (VND)',numeric:true},{label:'Cơ sở (CP)',numeric:true},{label:'Dư mua trước ngày',numeric:true},{label:'Dư mua còn lại',numeric:true},{label:'Tổng theo dõi đầu ngày',numeric:true},{label:'Tổng theo dõi cuối ngày',numeric:true},{label:'Giá vốn BQ phần dư (VND)',numeric:true},{label:'Trạng thái cuối ngày'},{label:'Ghi chú'}], dailyRows.map(row => {
       const key = rowKey(row), note = drafts.has(key) ? drafts.get(key) : row.note || '';
       const noteCell = administrator ? `<td class="reconciliationNote"><label class="reconciliationSrOnly" for="reconciliation-note-${esc(row.trade_date)}-${esc(row.ticker)}">Ghi chú ${esc(row.ticker)} ngày ${date(row.trade_date)}</label><textarea id="reconciliation-note-${esc(row.trade_date)}-${esc(row.ticker)}" data-note-input="${esc(key)}" rows="2" maxlength="2000" ${busy || pendingDelete ? 'disabled' : ''}>${esc(note)}</textarea><button type="button" class="smallButton ghostButton" data-note-save="${esc(key)}" ${busy || pendingDelete ? 'disabled' : ''}>Lưu ghi chú</button></td>` : `<td class="reconciliationNote">${esc(note || '—')}</td>`;
-      return `<tr>${tickerCell(row.ticker)}${textCell(date(row.trade_date))}${numericCell(row.buy_quantity)}${numericCell(row.sell_quantity)}${numericCell(row.matched_quantity)}${numericCell(row.residual_buy_quantity)}${numericCell(row.tracked_sell_quantity)}${numericCell(row.ignored_sell_quantity)}${numericCell(row.buy_average_price)}${numericCell(row.base_quantity)}${numericCell(row.opening_quantity)}${numericCell(row.closing_quantity)}${numericCell(row.opening_total_quantity)}${numericCell(row.closing_total_quantity)}${numericCell(row.closing_average_cost)}<td><span class="reconciliationBadge ${row.status === 'buy_remaining' ? 'remaining' : ''}">${esc(statuses[row.status] || row.status || '—')}</span></td>${noteCell}</tr>`;
+      return `<tr>${tickerCell(row.ticker)}${textCell(date(row.trade_date))}${numericCell(row.buy_quantity)}${numericCell(row.sell_quantity)}${numericCell(row.matched_quantity)}${numericCell(row.residual_buy_quantity)}${numericCell(row.tracked_sell_quantity)}${numericCell(row.ignored_sell_quantity)}${numericCell(row.buy_average_price)}${numericCell(row.buy_average_price_with_fee)}${numericCell(row.residual_buy_fee)}${numericCell(row.base_quantity)}${numericCell(row.opening_quantity)}${numericCell(row.closing_quantity)}${numericCell(row.opening_total_quantity)}${numericCell(row.closing_total_quantity)}${numericCell(row.closing_average_cost)}<td><span class="reconciliationBadge ${row.status === 'buy_remaining' ? 'remaining' : ''}">${esc(statuses[row.status] || row.status || '—')}</span></td>${noteCell}</tr>`;
     }), invalidRange ? 'Kiểm tra lại khoảng ngày.' : 'Không có giao dịch phù hợp bộ lọc.', 'Đối chiếu số lượng mua bán từng mã mỗi ngày'));
     replaceSection('[data-imports]', table([{label:'Ngày giao dịch'},{label:'Tệp báo cáo'},{label:'Số mã',numeric:true},{label:'Người nhập'},...(administrator ? [{label:'Thao tác'}] : [])], (report.imports || []).map(item => `<tr>${textCell(date(item.trade_date))}${textCell(item.filename)}${numericCell(item.rows_count)}${textCell(item.created_by)}${administrator ? `<td><button type="button" class="smallButton reconciliationDangerButton" data-delete-import="${esc(item.id)}" aria-label="Xóa báo cáo ngày ${date(item.trade_date)}: ${esc(item.filename)}" ${busy || pendingDelete || !item.revision ? 'disabled' : ''}>Xóa báo cáo</button></td>` : ''}</tr>`), 'Chưa nhập báo cáo.', 'Lịch sử báo cáo của tài khoản đang chọn'));
     syncDeleteControls();
@@ -366,13 +495,16 @@
         result = await request(`?scope=${encodeURIComponent(preferredScope)}`);
         if (!validIdentity(current) || read !== readVersion) return false;
       }
+      if ((plan || planBusy) && (report?.revision !== result.revision || report?.selected_scope !== result.selected_scope)) invalidatePlan('Dữ liệu hoặc phí của tài khoản đã thay đổi. Tính lại kế hoạch bán.');
       report = result;renderScopes();render();
+      if (!plan && !planBusy && panel.querySelector('[data-plan-status]').textContent === 'Dữ liệu đang được cập nhật. Tính lại kế hoạch bán khi tải xong.') panel.querySelector('[data-plan-status]').textContent = 'Dữ liệu đã cập nhật. Tính lại kế hoạch bán.';
       if (explicit || panel.querySelector('[data-status]').textContent === 'Đang tải dữ liệu…') status('Đã tải dữ liệu đối chiếu.');
       return true;
     } catch (error) {if (validIdentity(current) && read === readVersion) status(error.message, true);return false;}
   }
   function clear() {
     epoch++;readVersion++;fileVersion++;identity = null;administrator = false;selectedScope = '';report = null;selectedFile = null;preview = null;busy = false;pendingDelete = null;
+    feeDraftScope = '';feeDirty = false;feeSignature = '';plannerScope = '';plan = null;planVersion++;planBusy = false;
     signatures.clear();drafts.clear();
     if (panel) {panel.removeEventListener('input', noteInput);panel.removeEventListener('click', actionClick);panel.replaceChildren();panel.hidden = true;panel.removeAttribute('aria-busy');}
   }
