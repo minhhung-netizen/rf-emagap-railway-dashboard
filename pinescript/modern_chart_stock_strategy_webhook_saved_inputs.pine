@@ -149,7 +149,7 @@ enableDashboardAlert = input.bool(true, "Send full open/close to Dashboard", gro
 webhookSecret = input.string("change-me", "Webhook Secret", group=grpDashboard)
 dashboardStrategy = input.string("Modern Stock EMA", "Dashboard Strategy", group=grpDashboard)
 dashboardTickerOverride = input.string("", "Ticker Override - leave empty for chart symbol", group=grpDashboard, tooltip="Use this only if TradingView sends an adjusted symbol. Example: HOSE:PNJ")
-sendPartialAsConfirm = input.bool(false, "Send DCA/TP/Partial as confirm notes", group=grpDashboard, tooltip="Default OFF so partial TP/DCA is not treated as a full dashboard open/close.")
+sendPartialAsConfirm = input.bool(false, "Send DCA/TP/Partial as confirm notes", group=grpDashboard, tooltip="Default OFF. When ON, DCA and buy-back send confirm_buy: the dashboard adds DEFAULT_SIGNAL_WEIGHT_PCT (5% by default) to the open base position and counts it against rebalance caps. TP and partial sells send confirm_sell, which keeps the allocation; only a full sell closes the position.")
 baseStrategy = input.string("Modern Stock EMA", "Base Strategy for confirm notes", group=grpDashboard)
 
 
@@ -560,14 +560,14 @@ if barstate.isconfirmed and enableDashboardAlert
 
     if sendPartialAsConfirm
         if longDcaSignal
-            f_send_dashboard("confirm_buy", close, "DCA note only; step=" + str.tostring(dcaNextStep) + "; distanceC=" + str.tostring(distanceC, format.mintick) + "%", "confirm")
+            f_send_dashboard("confirm_buy", close, "DCA top-up; step=" + str.tostring(dcaNextStep) + "; distanceC=" + str.tostring(distanceC, format.mintick) + "%", "confirm")
         if buyBackPartialSignal
-            f_send_dashboard("confirm_buy", close, "Buy back partial note only; distanceC=" + str.tostring(distanceC, format.mintick) + "%", "confirm")
+            f_send_dashboard("confirm_buy", close, "Buy back partial top-up; distanceC=" + str.tostring(distanceC, format.mintick) + "%", "confirm")
         if emaDownPartialSignal
-            f_send_dashboard("confirm_sell", close, "EMA down partial sell note only; not full dashboard close", "confirm")
+            f_send_dashboard("confirm_sell", close, "EMA down partial sell; allocation kept until full close", "confirm")
         if longTp1Signal
-            f_send_dashboard("confirm_sell", close, "TP1 partial note only; not full dashboard close", "confirm")
+            f_send_dashboard("confirm_sell", close, "TP1 partial sell; allocation kept until full close", "confirm")
         if longTp2Signal
-            f_send_dashboard("confirm_sell", close, "TP2 partial note only; not full dashboard close", "confirm")
+            f_send_dashboard("confirm_sell", close, "TP2 partial sell; allocation kept until full close", "confirm")
         if longTp3Signal
-            f_send_dashboard("confirm_sell", close, "TP3 partial note only; not full dashboard close", "confirm")
+            f_send_dashboard("confirm_sell", close, "TP3 partial sell; allocation kept until full close", "confirm")

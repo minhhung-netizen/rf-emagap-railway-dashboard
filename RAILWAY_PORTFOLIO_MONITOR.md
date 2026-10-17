@@ -102,8 +102,13 @@ the dashboard uses `DEFAULT_SIGNAL_WEIGHT_PCT` (5 by default).
 }
 ```
 
-For a confirmation, provide the base position strategy. The confirmation can
-only top up a base position previously accepted by the portfolio gate:
+For a confirmation, provide the base position strategy. The base `buy` and its
+`confirm_buy` are two signals of the same rebalance system: an accepted
+`confirm_buy` adds its `allocation_pct` (or `DEFAULT_SIGNAL_WEIGHT_PCT`) to the
+base position previously accepted by the portfolio gate, keeps the base sleeve
+and sector, and is checked against the same caps as a `buy` when the ticker is
+in the rebalance list. `confirm_sell` is recorded without reducing the
+allocation; only `sell` closes the position:
 
 ```json
 {

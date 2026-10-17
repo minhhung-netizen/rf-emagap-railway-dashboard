@@ -120,7 +120,7 @@ TradingView gửi `POST /webhook` với JSON. Giữ tên chiến lược gốc �
 `HOSE:VPB` được chuẩn hóa thành `VPB`. Giá cổ phiếu `25000` VND được lưu dưới dạng `25` nghìn VND; `25` cũng được hiểu là 25 nghìn VND. Biểu mẫu NAV/sổ giao dịch nhập VND, ví dụ `25000`.
 
 - `buy` mở vị thế; `sell` đóng vị thế cùng mã và chiến lược.
-- `confirm_buy` cần `base_strategy` hoặc `confirm_for` trỏ tới vị thế base đang mở; `confirm_sell` là tín hiệu xác nhận thoát.
+- `confirm_buy` cần `base_strategy` hoặc `confirm_for` trỏ tới vị thế base đang mở. Base `buy` và `confirm_buy` là hai tín hiệu của cùng một hệ thống rebalance: mỗi `confirm_buy` được chấp nhận cộng thêm `allocation_pct` (thiếu thì dùng `DEFAULT_SIGNAL_WEIGHT_PCT`) vào vị thế base, giữ sleeve/ngành của base và chịu trần như `buy` khi mã thuộc danh sách rebalance. Ví dụ base 5% cộng một `confirm_buy` mặc định thành 10%, chạm trần mã 10% mặc định; `confirm_buy` tiếp theo sẽ bị từ chối `ticker_cap`. `confirm_sell` chỉ ghi nhận, không giảm tỷ trọng; `sell` đóng vị thế và giải phóng toàn bộ tỷ trọng.
 - `allocation_pct` là phần trăm, không phải tỷ lệ 0-1; thiếu trường này thì dùng mặc định.
 - RF/EMA cần sleeve hợp lệ và ngành được ánh xạ. Nếu tên chiến lược không chứa `rf`, `ema` hay `gap`, truyền `sleeve` là `RF` hoặc `EMA`.
 - `buy` cho mã đã có vị thế Gate bị từ chối để tránh trùng. Tín hiệu trùng mã/action/timeframe/strategy và cùng `time` bị bỏ qua; thiếu `time` dùng `DUPLICATE_WINDOW_MINUTES`.
@@ -294,6 +294,7 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
+| 17/10/2026 | Ghi rõ `confirm_buy` cộng tỷ trọng vào vị thế base của cùng hệ thống rebalance và `confirm_sell` không giảm tỷ trọng; sửa mô tả cảnh báo của `pinescript/modern_chart_stock_strategy_webhook_saved_inputs.pine` (không còn ghi "note only"). |
 | 17/10/2026 | Dashboard chỉ tải dữ liệu một lượt mỗi lần, gộp các lần làm mới chồng nhau; ô lọc mã ở Hiệu suất chờ ngừng gõ 0,4 giây mới tải lại, đổi sắp xếp không tải lại dữ liệu. Đăng xuất tải lại trang để không còn dữ liệu của tài khoản trước. Bảng chú ý của tài khoản chỉ xem ẩn khi không có mục. Cổ tức tự lấy cùng ngày từ cùng nguồn không còn bị bỏ sót; SQLite chờ khóa tối đa 30 giây. Sửa remote triển khai về `origin` và đồng bộ FUND_ANALYTICS, TRADE_LEDGER, RAILWAY_PORTFOLIO_MONITOR. |
 | 17/10/2026 | Bấm vào ô **Tìm mã** của Đối chiếu khớp lệnh không còn xóa biểu đồ Tổng quan; chỉ dòng trong bảng tín hiệu mới mở biểu đồ. Thời gian webhook không đọc được hiển thị dạng văn bản đã bỏ ký tự HTML; mã và tên chiến lược trong cảnh báo rủi ro được escape. Thêm `tests/test_signal_rendering_safety.js`. |
 | 13/10/2026 | Thêm phí mua/bán và khoản chi phí bán khác theo tài khoản, tự cộng phí mua vào giá vốn lịch sử; tính dải giá bán chia đều dư mua theo lợi nhuận mục tiêu sau phí. Thêm xóa từng báo cáo/xóa toàn bộ tài khoản cho admin, có xác nhận và kiểm tra phiên bản; xóa từng ngày giữ cơ sở/phí, xóa ghi chú ngày đó và tính lại lũy kế; xóa toàn bộ gồm cả cơ sở/phí. |

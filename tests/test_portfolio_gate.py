@@ -443,6 +443,57 @@ class PortfolioGateTest(unittest.TestCase):
         self.assertEqual(rejected["reason"], "ticker_cap")
         self.assertEqual(portfolio_gate_state(signals)["total_exposure_pct"], 10)
 
+    def test_same_system_confirm_buy_adds_weight_and_confirm_sell_keeps_it(self):
+        # The Modern EMA Pine sends strategy == base_strategy for its DCA top-ups.
+        backtest = {"summary": {"attention_lists": {"ema": {"rows": [{"ticker": "FPT"}]}}}}
+        payload = {"strategy": "Modern Stock EMA", "base_strategy": "Modern Stock EMA"}
+        signals = []
+        for signal_id, action in enumerate(("buy", "confirm_buy", "confirm_sell"), start=1):
+            result = evaluate_portfolio_signal(
+                payload=payload,
+                ticker="FPT",
+                exchange="HOSE",
+                action=action,
+                signals=signals,
+                backtest=backtest,
+                default_allocation_pct=5,
+                base_strategy=None if action == "buy" else "Modern Stock EMA",
+                sector_map={"FPT": "Công nghệ"},
+            )
+            self.assertTrue(result["allowed"], result.get("reason"))
+            signals.append(
+                stored_signal(
+                    signal_id=signal_id,
+                    ticker="FPT",
+                    strategy="Modern Stock EMA",
+                    action=action,
+                    classification=result["classification"],
+                )
+            )
+            expected_pct = 5 if action == "buy" else 10
+            self.assertEqual(portfolio_gate_state(signals)["by_ticker_pct"]["FPT"], expected_pct)
+
+        close = evaluate_portfolio_signal(
+            payload=payload,
+            ticker="FPT",
+            exchange="HOSE",
+            action="sell",
+            signals=signals,
+            backtest=backtest,
+            default_allocation_pct=5,
+        )
+        self.assertTrue(close["allowed"])
+        signals.append(
+            stored_signal(
+                signal_id=4,
+                ticker="FPT",
+                strategy="Modern Stock EMA",
+                action="sell",
+                classification=close["classification"],
+            )
+        )
+        self.assertEqual(portfolio_gate_state(signals)["total_exposure_pct"], 0)
+
     def test_sector_cap_rejects_a_new_bank_position(self):
         classifications = []
         for ticker, allocation in (("VPB", 10), ("ACB", 10), ("MBB", 10), ("TCB", 5)):
