@@ -11,8 +11,10 @@
    rồi nhập tệp. Tối đa 2.000 ngày/lần; giao diện giới hạn tệp 5 MB.
 
 Không tự tạo số dư tài khoản từ webhook. Chưa có đồng bộ NAV với công ty chứng
-khoán, sổ giao dịch đầy đủ hoặc dữ liệu benchmark tự động. Các bảng tín hiệu cũ
-được gắn nhãn riêng và không phải báo cáo hiệu suất quỹ.
+khoán hoặc dữ liệu benchmark tự động. NAV có thể nhập trực tiếp ở đây hoặc chốt
+từ **Quản trị → Sổ giao dịch** (xem [TRADE_LEDGER.md](TRADE_LEDGER.md)); sổ hiện
+chưa hạch toán phải thu/phải trả, nên snapshot chốt từ sổ ghi hai khoản này bằng 0.
+Các bảng tín hiệu cũ được gắn nhãn riêng và không phải báo cáo hiệu suất quỹ.
 
 ## Quy ước dữ liệu
 

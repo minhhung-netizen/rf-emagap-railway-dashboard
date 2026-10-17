@@ -51,6 +51,7 @@ node --check app/static/trade-ledger.js
 node tests/test_leading_signal_table.js
 node tests/test_trade_reconciliation_ui.js
 node tests/test_signal_rendering_safety.js
+node tests/test_dashboard_refresh.js
 ```
 
 ## 4. Railway và Git
@@ -68,13 +69,13 @@ SESSION_DAYS=30
 
 Hai token không dùng chung. `ADMIN_PASSWORD` được đồng bộ với admin khi biến này được khai báo và service khởi động lại. Sau deploy, kiểm tra `/health`, đăng nhập, ngày snapshot, vị thế và giá. GitHub nối Railway kích hoạt build khi `main` của repository triển khai có commit mới; cần xem trạng thái deploy và kiểm tra dữ liệu SQLite sau build.
 
-Trong checkout hiện tại, remote triển khai là `railway-dashboard`; `origin` trỏ tới repository `Dashboard` khác. Sau khi sửa và kiểm tra:
+Trong checkout này, `origin` trỏ tới repository triển khai `minhhung-netizen/rf-emagap-railway-dashboard`. Checkout khác có thể đặt tên remote khác; kiểm tra bằng `git remote -v` trước khi push. Sau khi sửa và kiểm tra:
 
 ```powershell
 git status
 git add DASHBOARD_GUIDE.md
 git commit -m "Update dashboard guide"
-git push railway-dashboard HEAD:main
+git push origin HEAD:main
 ```
 
 Ví dụ trên dành cho lần chỉ sửa hướng dẫn. Khi sửa chức năng, thêm cả file code đã đổi vào lệnh `git add`, rồi commit cùng `DASHBOARD_GUIDE.md`. Xem thêm [RAILWAY_PORTFOLIO_MONITOR.md](RAILWAY_PORTFOLIO_MONITOR.md).
@@ -215,7 +216,7 @@ Kiểm tra đầu vào vẫn áp dụng cho mọi webhook: secret, action/sleeve
 | **RF + EMA Monitor** | Snapshot backtest, exposure trong danh sách, số vị thế theo dõi, danh sách RF Stock MTF hiển thị trước EMA Gap Daily và trần |
 | **Quy trình vận hành** | Lịch rebalance và chuỗi thao tác theo thứ tự CDP TradingView → RF → EMA Gap → publish snapshot → chốt rebalance → theo dõi; lệnh npm thuộc dự án backtest riêng |
 | **Đối chiếu khớp lệnh** | Nhập Excel TCBS, giữ riêng cơ sở, theo dõi phần mua thêm và giá vốn gồm phí mua; cấu hình phí theo tài khoản và tính dải giá bán chia đều theo mục tiêu lợi nhuận ròng |
-| **Cổ tức** | Lịch quyền/cổ tức, nhập thủ công và kiểm tra mã đang mở |
+| **Cổ tức** | Lịch quyền/cổ tức, nhập thủ công và kiểm tra mã đang mở; sự kiện tự lấy cùng mã/ngày GDKHQ từ cùng nguồn (ví dụ tiền mặt và cổ phiếu) được giữ riêng, sự kiện trùng ngày từ nguồn khác hoặc đã nhập tay bị bỏ qua |
 | **Nhật ký** | Webhook trùng/bị từ chối cùng lý do |
 | **Quản trị** | Sổ giao dịch, NAV, chính sách rủi ro, dữ liệu/sao lưu, tài khoản, nhóm ngành |
 
@@ -277,7 +278,7 @@ Module này lưu thống kê riêng, không tự tạo bút toán Sổ giao dị
 2. Kiểm tra ngày snapshot cùng danh sách RF/EMA trong **RF + EMA Monitor**; nếu cũ, công bố lại từ dự án backtest.
 3. Nếu TradingView gửi alert nhưng không có vị thế, xem **Nhật ký** và đối chiếu `ticker`, `time`, `strategy`, `base_strategy`, sleeve, ngành, lý do `duplicate_webhook`, `sector_not_mapped`, `ticker_cap`, `nav_risk_pause`...
 4. Nếu giá cũ, kiểm tra nguồn, giờ giao dịch, cache và dùng nút cập nhật giá. VNStock được giới hạn dưới 20 yêu cầu/phút nên đồng bộ nhiều mã cần thời gian.
-5. Nếu Railway chưa cập nhật, xem commit trên `main` của remote `railway-dashboard`, build/deploy log, biến môi trường, Volume và `/health`. Sao lưu DB trước khi đổi đường dẫn lưu trữ.
+5. Nếu Railway chưa cập nhật, xem commit trên `main` của repository triển khai (`git remote -v`), build/deploy log, biến môi trường, Volume và `/health`. Sao lưu DB trước khi đổi đường dẫn lưu trữ.
 
 `/api/portfolio-gate` trả `state` của mọi vị thế Gate và `rebalance_recommended` của nhóm được quản lý; `/api/portfolio-backtests/latest` trả snapshot mới nhất; `/api/invalid-signals` trả log từ chối. API dashboard cần session đăng nhập. Webhook và importer dùng token riêng; không đưa token importer vào TradingView. `401` thường là thiếu/sai xác thực, `403` là thiếu quyền, `410` là API đã ngừng dùng.
 
@@ -293,6 +294,7 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
+| 17/10/2026 | Dashboard chỉ tải dữ liệu một lượt mỗi lần, gộp các lần làm mới chồng nhau; ô lọc mã ở Hiệu suất chờ ngừng gõ 0,4 giây mới tải lại, đổi sắp xếp không tải lại dữ liệu. Đăng xuất tải lại trang để không còn dữ liệu của tài khoản trước. Bảng chú ý của tài khoản chỉ xem ẩn khi không có mục. Cổ tức tự lấy cùng ngày từ cùng nguồn không còn bị bỏ sót; SQLite chờ khóa tối đa 30 giây. Sửa remote triển khai về `origin` và đồng bộ FUND_ANALYTICS, TRADE_LEDGER, RAILWAY_PORTFOLIO_MONITOR. |
 | 17/10/2026 | Bấm vào ô **Tìm mã** của Đối chiếu khớp lệnh không còn xóa biểu đồ Tổng quan; chỉ dòng trong bảng tín hiệu mới mở biểu đồ. Thời gian webhook không đọc được hiển thị dạng văn bản đã bỏ ký tự HTML; mã và tên chiến lược trong cảnh báo rủi ro được escape. Thêm `tests/test_signal_rendering_safety.js`. |
 | 13/10/2026 | Thêm phí mua/bán và khoản chi phí bán khác theo tài khoản, tự cộng phí mua vào giá vốn lịch sử; tính dải giá bán chia đều dư mua theo lợi nhuận mục tiêu sau phí. Thêm xóa từng báo cáo/xóa toàn bộ tài khoản cho admin, có xác nhận và kiểm tra phiên bản; xóa từng ngày giữ cơ sở/phí, xóa ghi chú ngày đó và tính lại lũy kế; xóa toàn bộ gồm cả cơ sở/phí. |
 | 12/10/2026 | Thêm Đối chiếu khớp lệnh: xem trước/import Excel TCBS theo tài khoản và ngày, chống cộng trùng, thay thế báo cáo, ghi chú; trừ lượng bán chênh lệch vào tồn mua trước đó, giữ giá vốn bình quân khi bán một phần. Thiết lập cổ phiếu cơ sở đã có sẵn theo tài khoản/mã, giữ riêng cơ sở và chỉ tính giá vốn cho phần mua thêm; báo cáo cũ tự được tính lại. |

@@ -3037,8 +3037,8 @@ async function submitLogin(event) {
 
 async function logout() {
   await fetch("/api/auth/logout", { method: "POST" });
-  els.accountMenu.open = false;
-  showLogin();
+  // Reload so no rendered table or cached state from this user remains for the next one.
+  window.location.reload();
 }
 
 function applyAccessControl() {
@@ -3233,8 +3233,31 @@ function settledPayload(result, fallback, label) {
   return fallback;
 }
 
-async function refresh() {
-  if (!state.user) return;
+let refreshRun = null;
+let refreshNext = null;
+
+// Run one dashboard load at a time. Calls made while a load is running share a
+// single follow-up load, so responses never land out of order and callers that
+// await refresh() after a save still see data fetched after that save.
+function refresh() {
+  if (!refreshRun) {
+    refreshRun = loadDashboard().finally(() => {
+      refreshRun = null;
+    });
+    return refreshRun;
+  }
+  if (!refreshNext) {
+    refreshNext = refreshRun.catch(() => {}).then(() => {
+      refreshNext = null;
+      return refresh();
+    });
+  }
+  return refreshNext;
+}
+
+async function loadDashboard() {
+  const user = state.user;
+  if (!user) return;
   els.syncStatus.textContent = t("syncing");
   const performanceQuery = buildPerformanceQuery();
   const results = await Promise.allSettled([
@@ -3262,6 +3285,8 @@ async function refresh() {
     featureFetch("positions", "/api/sectors", { sectors: [], sector_names: [] }),
     featureFetch("overview", "/api/leading-signals", { leading_signals: [], summary: {} }),
   ]);
+  // Drop results that belong to a user who has since logged out or switched.
+  if (state.user !== user) return;
 
   const settingsPayload = settledPayload(
     results[0],
@@ -3362,6 +3387,7 @@ async function refresh() {
   renderRiskAlerts();
   await window.FundAnalytics?.refresh(state.user);
   await window.TradeReconciliation?.refresh(state.user);
+  if (state.user !== user) return;
   state.lastRefreshAt = new Date();
   els.syncStatus.textContent = state.marketDataProvider === "unavailable"
     ? t("marketDataUnavailable")
@@ -7193,9 +7219,14 @@ els.positionInsightChart.addEventListener("click", () => {
   setActiveTab("overview");
   renderChart(ticker);
 });
-els.performanceTickerFilter.addEventListener("input", refresh);
+let performanceFilterTimer = null;
+els.performanceTickerFilter.addEventListener("input", () => {
+  // Wait for typing to pause instead of reloading the dashboard on every keystroke.
+  clearTimeout(performanceFilterTimer);
+  performanceFilterTimer = setTimeout(refresh, 400);
+});
 els.performanceStrategyFilter.addEventListener("change", refresh);
-els.performanceSort.addEventListener("change", refresh);
+els.performanceSort.addEventListener("change", renderScopedSignalPerformance);
 els.performanceScope.addEventListener("change", renderScopedSignalPerformance);
 els.backtestStrategyFilter.addEventListener("change", () => renderBacktestStats(filterBacktestStats(state.backtestStats)));
 els.backtestTickerSearch.addEventListener("input", () => renderBacktestStats(filterBacktestStats(state.backtestStats)));

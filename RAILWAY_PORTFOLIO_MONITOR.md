@@ -71,8 +71,13 @@ https://<your-domain>/webhook
 
 Include `WEBHOOK_SECRET` as the existing `secret` property or `?secret=` query
 parameter. This edition accepts stock `buy`, `sell`, `confirm_buy`, and
-`confirm_sell` signals only. Derivatives, DCA plans, Kelly allocation, and
-manual positions are deliberately retired from its live operation.
+`confirm_sell` signals, plus Inertial RSI leading signals (`setup_bull`,
+`setup_bear`, `momentum_bull`, `momentum_bear`) that are shown in the
+**Tín hiệu sớm** tab without opening positions or using exposure. Derivatives,
+DCA plans, Kelly allocation, and manual positions are deliberately retired from
+its live operation; derivative payloads (for example from
+`pinescript/vn30_modern_dca_dashboard.pine`) are logged as
+`unsupported_asset_type`.
 
 The **Performance** tab reports only signals accepted by this portfolio gate;
 historical `Legacy` signals are excluded. The **Dividends** tab remains

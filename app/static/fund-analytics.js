@@ -140,7 +140,7 @@
       }).catch(e=>{if(current===generation){renderedData.delete(panel);panel.innerHTML=`<p class="fundError">Không tải được dữ liệu: ${esc(e.message)}</p>`;}}));
     }
     adminPanels.forEach(panel=>{panel.hidden=!admin;});
-    if(admin && !adminLoaded){renderAdmin();adminLoaded=true;jobs.push(request('/api/admin/nav-snapshots').then(data=>{if(activeUser?._identity!==identity)return;const form=riskAdminPanel.querySelector('#fundPolicyForm');for(const [key,value] of Object.entries(data.policy)){if(typeof value==='boolean')form.elements[key].checked=value;else form.elements[key].value=value;}}).catch(e=>{if(activeUser?._identity===identity){adminLoaded=false;riskAdminPanel.querySelector('[data-fund-admin-status]').textContent=e.message;}}));}
+    if(admin && !adminLoaded){renderAdmin();adminLoaded=true;jobs.push(request('/api/admin/nav-snapshots').then(data=>{if(activeUser?._identity!==identity)return;const form=riskAdminPanel.querySelector('#fundPolicyForm');for(const [key,value] of Object.entries(data.policy)){const field=form.elements[key];if(!field)continue;if(typeof value==='boolean')field.checked=value;else field.value=value;}}).catch(e=>{if(activeUser?._identity===identity){adminLoaded=false;riskAdminPanel.querySelector('[data-fund-admin-status]').textContent=e.message;}}));}
     await Promise.all(jobs);
   }
   window.FundAnalytics={refresh,clear};

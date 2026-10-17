@@ -46,7 +46,9 @@ dùng đúng cấu trúc của mẫu, không thêm các trường ID/người nh
   Phí mua cộng vào giá vốn; bán từng phần giải phóng giá vốn theo bình quân.
 - Lãi/lỗ đã chốt: tiền bán − phí/thuế bán − giá vốn phần bán.
 - Lãi/lỗ chưa chốt: giá trị cổ phiếu theo giá kiểm chứng − giá vốn còn lại.
-- NAV: tiền mặt kế toán + tổng lượng giữ × giá kiểm chứng cùng ngày.
+- NAV: tiền mặt kế toán + tổng lượng giữ × giá kiểm chứng cùng ngày. Snapshot chốt
+  từ sổ ghi phải thu/phải trả bằng 0, nên vẫn khớp công thức NAV trong
+  [FUND_ANALYTICS.md](FUND_ANALYTICS.md).
 - Tổng P/L từ đầu sổ: NAV − tổng nạp/rút ròng. Bằng P/L đã chốt + P/L chưa chốt
   + cổ tức ròng − chi phí khác.
 
@@ -125,4 +127,5 @@ DATABASE_PATH đang dùng; sao lưu database trước khi triển khai.
 - POST /api/admin/ledger/close: trade_date, benchmark_name, benchmark_value tùy chọn.
 
 Kiểm tra: `.venv/Scripts/python.exe -m unittest discover -s tests` và
-`node --check app/static/trade-ledger.js`.
+`node --check app/static/trade-ledger.js`; các test giao diện khác ở
+[DASHBOARD_GUIDE.md](DASHBOARD_GUIDE.md#3-cài-đặt-cục-bộ).

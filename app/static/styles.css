@@ -248,6 +248,10 @@ body {
   display: block !important;
 }
 
+.readOnly .userOnly[hidden] {
+  display: none !important;
+}
+
 .adminPanel {
   background: var(--panel);
   border: 1px solid var(--line);

@@ -629,6 +629,44 @@ class SignalStoreTest(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["note"], "FireAnt: Cổ tức cập nhật")
 
+    def test_external_dividends_on_same_ex_date_keep_distinct_source_events(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            cash = {
+                "ticker": "FPT",
+                "ex_date": "2026-06-20",
+                "cash_amount": 2,
+                "note": "VNStock: cash",
+                "source": "vnstock",
+                "external_id": "FPT:cash",
+            }
+            stock = {**cash, "cash_amount": None, "stock_ratio_pct": 15,
+                     "note": "VNStock: stock", "external_id": "FPT:stock"}
+            other_source = {**cash, "note": "FireAnt: Cổ tức", "source": "fireant",
+                            "external_id": "FPT:mark-1"}
+
+            store.upsert_external_dividend_events([cash, stock, other_source])
+
+            rows = store.list_dividend_events("FPT")
+            self.assertEqual(
+                sorted(row["note"] for row in rows), ["VNStock: cash", "VNStock: stock"]
+            )
+
+    def test_external_dividend_does_not_duplicate_manual_event(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            store.insert_dividend_event(
+                ticker="FPT", ex_date="2026-06-20", cash_amount=2,
+                stock_ratio_pct=None, note="manual",
+            )
+
+            store.upsert_external_dividend_events([{
+                "ticker": "FPT", "ex_date": "2026-06-20", "cash_amount": 2,
+                "source": "vnstock", "external_id": "FPT:cash",
+            }])
+
+            self.assertEqual([row["note"] for row in store.list_dividend_events("FPT")], ["manual"])
+
     def test_sector_mapping_keeps_manual_classification_during_auto_refresh(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SignalStore(Path(temp_dir) / "signals.db")

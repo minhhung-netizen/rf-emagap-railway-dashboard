@@ -397,7 +397,9 @@ class SignalStore:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.database_path)
+        # Background enrichment threads and requests write concurrently; wait for
+        # the lock instead of failing after sqlite3's default 5 seconds.
+        conn = sqlite3.connect(self.database_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         try:
@@ -1703,12 +1705,16 @@ class SignalStore:
                     )
                     updated += 1
                     continue
+                # Skip events another source (or a manual entry) already recorded for
+                # this ticker/date; distinct ids from the same source, such as a cash
+                # dividend and a stock dividend on one ex-date, are separate events.
                 duplicate = conn.execute(
                     """
                     SELECT id FROM dividend_events
                     WHERE ticker = ? AND ex_date = ?
+                      AND COALESCE(LOWER(source), '') != ?
                     """,
-                    (ticker, ex_date),
+                    (ticker, ex_date, source),
                 ).fetchone()
                 if duplicate:
                     continue
