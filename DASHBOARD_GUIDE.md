@@ -1,6 +1,6 @@
 # Hướng dẫn RF + EMA Portfolio Gate Dashboard
 
-Cập nhật: 13/10/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
+Cập nhật: 17/10/2026. Tài liệu này mô tả bản Railway hiện tại. Khi chức năng thay đổi, cập nhật phần liên quan và [lịch sử hướng dẫn](#lich-su-huong-dan) trong cùng commit.
 
 ## 1. Phạm vi và nguồn dữ liệu
 
@@ -48,6 +48,9 @@ python -m unittest discover -s tests
 node --check app/static/app.js
 node --check app/static/fund-analytics.js
 node --check app/static/trade-ledger.js
+node tests/test_leading_signal_table.js
+node tests/test_trade_reconciliation_ui.js
+node tests/test_signal_rendering_safety.js
 ```
 
 ## 4. Railway và Git
@@ -290,6 +293,7 @@ Quy ước này cũng nằm trong [AGENTS.md](AGENTS.md) để các lần làm v
 
 | Ngày | Thay đổi |
 | --- | --- |
+| 17/10/2026 | Bấm vào ô **Tìm mã** của Đối chiếu khớp lệnh không còn xóa biểu đồ Tổng quan; chỉ dòng trong bảng tín hiệu mới mở biểu đồ. Thời gian webhook không đọc được hiển thị dạng văn bản đã bỏ ký tự HTML; mã và tên chiến lược trong cảnh báo rủi ro được escape. Thêm `tests/test_signal_rendering_safety.js`. |
 | 13/10/2026 | Thêm phí mua/bán và khoản chi phí bán khác theo tài khoản, tự cộng phí mua vào giá vốn lịch sử; tính dải giá bán chia đều dư mua theo lợi nhuận mục tiêu sau phí. Thêm xóa từng báo cáo/xóa toàn bộ tài khoản cho admin, có xác nhận và kiểm tra phiên bản; xóa từng ngày giữ cơ sở/phí, xóa ghi chú ngày đó và tính lại lũy kế; xóa toàn bộ gồm cả cơ sở/phí. |
 | 12/10/2026 | Thêm Đối chiếu khớp lệnh: xem trước/import Excel TCBS theo tài khoản và ngày, chống cộng trùng, thay thế báo cáo, ghi chú; trừ lượng bán chênh lệch vào tồn mua trước đó, giữ giá vốn bình quân khi bán một phần. Thiết lập cổ phiếu cơ sở đã có sẵn theo tài khoản/mã, giữ riêng cơ sở và chỉ tính giá vốn cho phần mua thêm; báo cáo cũ tự được tính lại. |
 | 11/10/2026 | Tín hiệu sớm giữ nguyên khi RF/EMA mở, xác nhận hoặc đóng vị thế; chỉ ẩn khi hết hạn/đổi chiều cùng mã, chỉ báo và khung. Tách hiệu lực khỏi liên hệ lịch sử với lệnh mua; thêm ngành trong API, lọc ngành và loại tín hiệu hiện có, sắp xếp theo cột, mở rộng vùng bảng và nút xóa từng tín hiệu cho admin. |

@@ -4964,7 +4964,7 @@ function renderRiskAlerts() {
     alerts.push({
       level: "warning",
       title: t("concentrationAlert"),
-      detail: `${tickerExposure[0].key} ${formatPercent(tickerExposure[0].value)}`,
+      detail: `${escapeHtml(tickerExposure[0].key)} ${formatPercent(tickerExposure[0].value)}`,
       ticker: tickerExposure[0].key,
     });
   }
@@ -4972,7 +4972,7 @@ function renderRiskAlerts() {
     alerts.push({
       level: "warning",
       title: t("strategyConcentrationAlert"),
-      detail: `${displayStrategyName(strategyExposure[0].key)} ${formatPercent(strategyExposure[0].value)}`,
+      detail: `${escapeHtml(displayStrategyName(strategyExposure[0].key))} ${formatPercent(strategyExposure[0].value)}`,
     });
   }
   (state.dividendAlerts || [])
@@ -4982,7 +4982,7 @@ function renderRiskAlerts() {
       alerts.push({
         level: "danger",
         title: t("exDateToday"),
-        detail: `${alert.ticker || alert.symbol || "-"} ${formatDateOnly(alert.ex_date || alert.date)}`,
+        detail: `${escapeHtml(alert.ticker || alert.symbol || "-")} ${formatDateOnly(alert.ex_date || alert.date)}`,
         ticker: alert.ticker || alert.symbol,
       });
     });
@@ -4991,7 +4991,7 @@ function renderRiskAlerts() {
     .forEach(({ trade, signal }) => alerts.push({
       level: "warning",
       title: t("avgLossTouchAlert"),
-      detail: `${trade.ticker} ${displayStrategyName(trade.strategy) || "-"} ${averageLossSignalDetail(signal)}`,
+      detail: `${escapeHtml(trade.ticker)} ${escapeHtml(displayStrategyName(trade.strategy) || "-")} ${averageLossSignalDetail(signal)}`,
       ticker: trade.ticker,
     }));
   averageGainSignals()
@@ -4999,7 +4999,7 @@ function renderRiskAlerts() {
     .forEach(({ trade, signal }) => alerts.push({
       level: "success",
       title: t("avgGainTouchAlert"),
-      detail: `${trade.ticker} ${displayStrategyName(trade.strategy) || "-"} ${averageGainSignalDetail(signal)}`,
+      detail: `${escapeHtml(trade.ticker)} ${escapeHtml(displayStrategyName(trade.strategy) || "-")} ${averageGainSignalDetail(signal)}`,
       ticker: trade.ticker,
     }));
   rows
@@ -5008,7 +5008,7 @@ function renderRiskAlerts() {
     .forEach((row) => alerts.push({
       level: "danger",
       title: t("lossRiskAlert"),
-      detail: `${row.trade.ticker} ${formatSignedPercent(row.trade.return_pct)}`,
+      detail: `${escapeHtml(row.trade.ticker)} ${formatSignedPercent(row.trade.return_pct)}`,
       ticker: row.trade.ticker,
     }));
   (state.dividendAlerts || [])
@@ -5018,7 +5018,7 @@ function renderRiskAlerts() {
       alerts.push({
         level: "warning",
         title: t("dividendRiskAlert"),
-        detail: `${alert.ticker || alert.symbol || "-"} ${formatDateOnly(alert.ex_date || alert.date)}`,
+        detail: `${escapeHtml(alert.ticker || alert.symbol || "-")} ${formatDateOnly(alert.ex_date || alert.date)}`,
         ticker: alert.ticker || alert.symbol,
       });
     });
@@ -5033,7 +5033,7 @@ function renderRiskAlerts() {
     alerts.push({
       level: "info",
       title: t("newSellAlert"),
-      detail: `${trade.ticker} ${displayStrategyName(trade.strategy) || "-"} ${formatDateOnly(trade.exit_time)}`,
+      detail: `${escapeHtml(trade.ticker)} ${escapeHtml(displayStrategyName(trade.strategy) || "-")} ${formatDateOnly(trade.exit_time)}`,
       ticker: trade.ticker,
     });
   });
@@ -5043,6 +5043,7 @@ function renderRiskAlerts() {
     return;
   }
 
+  // detail is HTML (coloured percentages); tickers and strategies are escaped where it is built.
   els.riskAlertList.innerHTML = alerts.slice(0, 10).map((alert) => `
     <button class="riskAlertItem ${alert.level}" type="button" ${alert.ticker ? `data-risk-alert-ticker="${escapeHtml(alert.ticker)}"` : ""}>
       <span>${escapeHtml(alert.title)}</span>
@@ -6457,13 +6458,15 @@ function renderSignals() {
     })
     .join("");
 
-  document.querySelectorAll("[data-ticker]").forEach((row) => {
+  // Bind only the rows rendered above: other panels reuse data-ticker (e.g. the
+  // reconciliation filter input) and must not gain a chart listener per refresh.
+  els.table.querySelectorAll("[data-ticker]").forEach((row) => {
     row.addEventListener("click", () => renderChart(row.dataset.ticker));
   });
   els.signalCards.querySelectorAll("[data-signal-card-ticker]").forEach((card) => {
     card.addEventListener("click", () => renderChart(card.dataset.signalCardTicker));
   });
-  document.querySelectorAll("[data-delete-id]").forEach((button) => {
+  els.table.querySelectorAll("[data-delete-id]").forEach((button) => {
     button.addEventListener("click", async (event) => {
       event.stopPropagation();
       await deleteSignal(button.dataset.deleteId);
@@ -6884,7 +6887,9 @@ function clearChart(message) {
 function formatDate(value) {
   if (!value) return "-";
   const date = parseDateValue(value);
-  if (!date) return value;
+  // Unparseable times come straight from webhook payloads and many templates
+  // insert this result as HTML, so drop markup characters instead of echoing them.
+  if (!date) return String(value).replace(/[<>&"'`]/g, "");
   return date.toLocaleString(state.language === "vi" ? "vi-VN" : "en-US");
 }
 

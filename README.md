@@ -24,4 +24,6 @@ Mở `http://127.0.0.1:8000`. Xem [hướng dẫn chính](DASHBOARD_GUIDE.md) tr
 ```powershell
 python -m unittest discover -s tests
 node tests/test_leading_signal_table.js
+node tests/test_trade_reconciliation_ui.js
+node tests/test_signal_rendering_safety.js
 ```
