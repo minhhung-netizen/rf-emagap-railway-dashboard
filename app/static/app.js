@@ -5898,7 +5898,10 @@ function portfolioTradeWeightPct(trade) {
     const gate = signal?.payload?.portfolio_gate;
     const signalTime = String(signal?.source_time || signal?.received_at || "");
     const matchingPosition = String(gate?.position_strategy || "").trim() === strategy;
+    // Mirror the gate: only confirmations from the base position's own system add weight.
+    const sameSystem = String(signal?.strategy || "").trim().toLowerCase() === strategy.toLowerCase();
     if (
+      !sameSystem ||
       String(signal?.action || "").toLowerCase() !== "confirm_buy" ||
       String(signal?.ticker || "").toUpperCase() !== ticker ||
       !matchingPosition || signalTime < entryTime || signalTime > exitTime

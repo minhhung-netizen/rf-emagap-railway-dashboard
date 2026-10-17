@@ -16,6 +16,9 @@ DEFAULT_GUARDRAILS = {
     "rebalance": "RF 3 tháng; EMA 6 tháng; review danh mục hàng quý.",
 }
 GATE_VERSION = 1
+# Strategies outside the RF/EMA rebalance system. Their positions stay visible as
+# tracked positions but never count toward rebalance caps or block system buys.
+TRACKING_ONLY_STRATEGIES = frozenset({"modern stock ema", "mordern stock ema"})
 _SECTOR_PATH = Path(__file__).resolve().parents[1] / "data" / "vn_sectors.json"
 
 
@@ -77,7 +80,10 @@ def portfolio_gate_state(signals: list[dict[str, Any]]) -> dict[str, Any]:
                 "entry_time": signal.get("source_time") or signal.get("received_at"),
             }
         elif action == "confirm_buy" and key in positions:
-            positions[key]["allocation_pct"] += _number(gate.get("allocation_pct")) or 0
+            # Only a confirmation from the base position's own system adds weight;
+            # this also neutralizes cross-system top-ups stored before the rule.
+            if _strategy_key(signal.get("strategy")) == strategy:
+                positions[key]["allocation_pct"] += _number(gate.get("allocation_pct")) or 0
         elif action == "sell":
             positions.pop(key, None)
 
@@ -124,17 +130,19 @@ def rebalance_recommended_state(
             "by_sleeve_pct": {},
             "excluded_positions": list(gate_state.get("positions") or []),
         }
-    recommended = [
-        position for position in gate_state.get("positions") or []
-        if str(position.get("ticker") or "").upper()
-        in recommended_tickers.get(str(position.get("sleeve") or "").upper(), set())
-    ]
-    result = summarize_portfolio_positions(recommended)
+    def in_matching_list(position: dict[str, Any]) -> bool:
+        return not is_tracking_only_strategy(position.get("strategy")) and (
+            str(position.get("ticker") or "").upper()
+            in recommended_tickers.get(str(position.get("sleeve") or "").upper(), set())
+        )
+
+    positions = gate_state.get("positions") or []
+    result = summarize_portfolio_positions(
+        [position for position in positions if in_matching_list(position)]
+    )
     result["available"] = True
     result["excluded_positions"] = [
-        position for position in gate_state.get("positions") or []
-        if str(position.get("ticker") or "").upper()
-        not in recommended_tickers.get(str(position.get("sleeve") or "").upper(), set())
+        position for position in positions if not in_matching_list(position)
     ]
     return result
 
@@ -170,7 +178,9 @@ def evaluate_portfolio_signal(
             sector=current["sector"],
             allocation_pct=0,
             position_strategy=current["strategy"],
-            rebalance_managed=is_rebalance_managed(ticker, current["sleeve"], backtest),
+            rebalance_managed=_is_managed_position(
+                ticker, current["sleeve"], current["strategy"], backtest
+            ),
         )
 
     if action == "confirm_sell":
@@ -181,8 +191,8 @@ def evaluate_portfolio_signal(
             sector=sector_for(ticker, exchange, payload),
             allocation_pct=0,
             position_strategy=strategy,
-            rebalance_managed=is_rebalance_managed(
-                ticker, classify_sleeve(payload), backtest
+            rebalance_managed=_is_managed_position(
+                ticker, classify_sleeve(payload), strategy, backtest
             ),
         )
 
@@ -194,6 +204,18 @@ def evaluate_portfolio_signal(
         sleeve = current["sleeve"]
         sector = current["sector"]
         position_strategy = current["strategy"]
+        if strategy_key != _strategy_key(position_strategy):
+            # A confirmation from another system is recorded without adding weight.
+            return _accepted(
+                state,
+                guardrails,
+                sleeve=sleeve,
+                sector=sector,
+                allocation_pct=0,
+                position_strategy=position_strategy,
+                rebalance_managed=_is_managed_position(ticker, sleeve, position_strategy, backtest),
+                allocation_policy="other_system_confirmation",
+            )
     elif action == "buy":
         sleeve = classify_sleeve(payload)
         sector = sector_for(ticker, exchange, payload, sector_map=sector_map)
@@ -202,7 +224,12 @@ def evaluate_portfolio_signal(
             return _rejected("unsupported_portfolio_strategy", state, guardrails)
         if sector is None:
             return _rejected("sector_not_mapped", state, guardrails)
-        if state["by_ticker_pct"].get(ticker, 0) > 0:
+        tracking_only = is_tracking_only_strategy(strategy)
+        if any(
+            row["ticker"] == ticker
+            and is_tracking_only_strategy(row["strategy"]) == tracking_only
+            for row in state["positions"]
+        ):
             return _rejected("same_ticker_position_open", state, guardrails)
     else:
         return _rejected("unsupported_portfolio_action", state, guardrails)
@@ -210,7 +237,7 @@ def evaluate_portfolio_signal(
     requested_pct = allocation_pct(payload, default_allocation_pct)
     if requested_pct is None:
         return _rejected("invalid_allocation_pct", state, guardrails)
-    rebalance_managed = is_rebalance_managed(ticker, sleeve, backtest)
+    rebalance_managed = _is_managed_position(ticker, sleeve, position_strategy, backtest)
     if rebalance_managed:
         managed_state = rebalance_recommended_state(state, backtest)
         reason = _allocation_rejection_reason(
@@ -353,19 +380,23 @@ def _accepted(
     allocation_pct: float,
     position_strategy: str,
     rebalance_managed: bool = False,
+    allocation_policy: str | None = None,
 ) -> dict[str, Any]:
+    classification = {
+        "version": GATE_VERSION,
+        "sleeve": sleeve,
+        "sector": sector,
+        "allocation_pct": allocation_pct,
+        "position_strategy": position_strategy,
+        "rebalance_managed": rebalance_managed,
+    }
+    if allocation_policy:
+        classification["allocation_policy"] = allocation_policy
     return {
         "allowed": True,
         "state": state,
         "guardrails": guardrails,
-        "classification": {
-            "version": GATE_VERSION,
-            "sleeve": sleeve,
-            "sector": sector,
-            "allocation_pct": allocation_pct,
-            "position_strategy": position_strategy,
-            "rebalance_managed": rebalance_managed,
-        },
+        "classification": classification,
     }
 
 
@@ -414,6 +445,18 @@ def is_rebalance_managed(
     return bool(
         available
         and ticker.upper() in tickers.get(str(sleeve or "").upper(), set())
+    )
+
+
+def is_tracking_only_strategy(strategy: Any) -> bool:
+    return _strategy_key(strategy) in TRACKING_ONLY_STRATEGIES
+
+
+def _is_managed_position(
+    ticker: str, sleeve: str | None, strategy: Any, backtest: dict[str, Any] | None
+) -> bool:
+    return not is_tracking_only_strategy(strategy) and is_rebalance_managed(
+        ticker, sleeve, backtest
     )
 
 

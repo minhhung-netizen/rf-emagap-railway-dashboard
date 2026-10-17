@@ -149,7 +149,7 @@ enableDashboardAlert = input.bool(true, "Send full open/close to Dashboard", gro
 webhookSecret = input.string("change-me", "Webhook Secret", group=grpDashboard)
 dashboardStrategy = input.string("Modern Stock EMA", "Dashboard Strategy", group=grpDashboard)
 dashboardTickerOverride = input.string("", "Ticker Override - leave empty for chart symbol", group=grpDashboard, tooltip="Use this only if TradingView sends an adjusted symbol. Example: HOSE:PNJ")
-sendPartialAsConfirm = input.bool(false, "Send DCA/TP/Partial as confirm notes", group=grpDashboard, tooltip="Default OFF. When ON, DCA and buy-back send confirm_buy: the dashboard adds DEFAULT_SIGNAL_WEIGHT_PCT (5% by default) to the open base position and counts it against rebalance caps. TP and partial sells send confirm_sell, which keeps the allocation; only a full sell closes the position.")
+sendPartialAsConfirm = input.bool(false, "Send DCA/TP/Partial as confirm notes", group=grpDashboard, tooltip="Default OFF. When ON, DCA and buy-back send confirm_buy: when Dashboard Strategy equals Base Strategy (e.g. both Modern Stock EMA Gap Layer for EMA Daily), the dashboard adds DEFAULT_SIGNAL_WEIGHT_PCT (5% by default) to the open base position and counts it against rebalance caps; a different strategy is recorded at 0%. TP and partial sells send confirm_sell, which keeps the allocation; only a full sell closes the position.")
 baseStrategy = input.string("Modern Stock EMA", "Base Strategy for confirm notes", group=grpDashboard)
 
 

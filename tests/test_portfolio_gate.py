@@ -408,7 +408,7 @@ class PortfolioGateTest(unittest.TestCase):
         ]
 
         second = evaluate_portfolio_signal(
-            payload={"strategy": "EMA confirmation"},
+            payload={"strategy": "RF Stock MTF"},
             ticker="VPB",
             exchange="HOSE",
             action="confirm_buy",
@@ -423,14 +423,14 @@ class PortfolioGateTest(unittest.TestCase):
             stored_signal(
                 signal_id=2,
                 ticker="VPB",
-                strategy="EMA confirmation",
+                strategy="RF Stock MTF",
                 action="confirm_buy",
                 classification=second["classification"],
             )
         )
 
         rejected = evaluate_portfolio_signal(
-            payload={"strategy": "EMA confirmation"},
+            payload={"strategy": "RF Stock MTF"},
             ticker="VPB",
             exchange="HOSE",
             action="confirm_buy",
@@ -443,10 +443,120 @@ class PortfolioGateTest(unittest.TestCase):
         self.assertEqual(rejected["reason"], "ticker_cap")
         self.assertEqual(portfolio_gate_state(signals)["total_exposure_pct"], 10)
 
-    def test_same_system_confirm_buy_adds_weight_and_confirm_sell_keeps_it(self):
-        # The Modern EMA Pine sends strategy == base_strategy for its DCA top-ups.
+    def test_confirm_buy_from_another_system_is_recorded_without_weight(self):
         backtest = {"summary": {"attention_lists": {"ema": {"rows": [{"ticker": "FPT"}]}}}}
-        payload = {"strategy": "Modern Stock EMA", "base_strategy": "Modern Stock EMA"}
+        base = evaluate_portfolio_signal(
+            payload={"strategy": "Modern Stock EMA Gap Layer"},
+            ticker="FPT",
+            exchange="HOSE",
+            action="buy",
+            signals=[],
+            backtest=backtest,
+            default_allocation_pct=5,
+            sector_map={"FPT": "Công nghệ"},
+        )
+        signals = [
+            stored_signal(
+                signal_id=1,
+                ticker="FPT",
+                strategy="Modern Stock EMA Gap Layer",
+                action="buy",
+                classification=base["classification"],
+            )
+        ]
+
+        mse = evaluate_portfolio_signal(
+            payload={"strategy": "Modern Stock EMA", "allocation_pct": 5},
+            ticker="FPT",
+            exchange="HOSE",
+            action="confirm_buy",
+            signals=signals,
+            backtest=backtest,
+            default_allocation_pct=5,
+            base_strategy="Modern Stock EMA Gap Layer",
+        )
+
+        self.assertTrue(mse["allowed"])
+        self.assertEqual(mse["classification"]["allocation_pct"], 0)
+        self.assertEqual(mse["classification"]["allocation_policy"], "other_system_confirmation")
+        self.assertEqual(mse["classification"]["position_strategy"], "Modern Stock EMA Gap Layer")
+        self.assertTrue(mse["classification"]["rebalance_managed"])
+
+    def test_cross_system_top_ups_stored_before_the_rule_add_no_weight(self):
+        rf = {"version": 1, "sleeve": "RF", "sector": "banking", "allocation_pct": 5,
+              "position_strategy": "RF Stock MTF"}
+        state = portfolio_gate_state([
+            stored_signal(signal_id=1, ticker="VPB", strategy="RF Stock MTF", action="buy", classification=rf),
+            stored_signal(signal_id=2, ticker="VPB", strategy="Modern Stock EMA", action="confirm_buy", classification=rf),
+            stored_signal(signal_id=3, ticker="VPB", strategy="RF Stock MTF", action="confirm_buy", classification=rf),
+        ])
+        self.assertEqual(state["by_ticker_pct"]["VPB"], 10)
+
+    def test_mse_buy_is_tracked_without_consuming_rebalance_caps(self):
+        backtest = {"summary": {
+            "attention_lists": {"ema": {"rows": [{"ticker": "FPT"}]}},
+            "guardrails": {"ticker_cap": 0.05},
+        }}
+        mse = evaluate_portfolio_signal(
+            payload={"strategy": "Modern Stock EMA", "allocation_pct": 8},
+            ticker="FPT",
+            exchange="HOSE",
+            action="buy",
+            signals=[],
+            backtest=backtest,
+            default_allocation_pct=5,
+            sector_map={"FPT": "Công nghệ"},
+        )
+        self.assertTrue(mse["allowed"], mse.get("reason"))
+        self.assertFalse(mse["classification"]["rebalance_managed"])
+        signals = [
+            stored_signal(signal_id=1, ticker="FPT", strategy="Modern Stock EMA",
+                          action="buy", classification=mse["classification"]),
+        ]
+
+        # The EMA Daily system can still open the same ticker within its own cap.
+        system = evaluate_portfolio_signal(
+            payload={"strategy": "Modern Stock EMA Gap Layer"},
+            ticker="FPT",
+            exchange="HOSE",
+            action="buy",
+            signals=signals,
+            backtest=backtest,
+            default_allocation_pct=5,
+            sector_map={"FPT": "Công nghệ"},
+        )
+        self.assertTrue(system["allowed"], system.get("reason"))
+        self.assertTrue(system["classification"]["rebalance_managed"])
+        signals.append(
+            stored_signal(signal_id=2, ticker="FPT", strategy="Modern Stock EMA Gap Layer",
+                          action="buy", classification=system["classification"]),
+        )
+
+        state = portfolio_gate_state(signals)
+        recommended = rebalance_recommended_state(state, backtest)
+        self.assertEqual(state["by_ticker_pct"]["FPT"], 13)
+        self.assertEqual(recommended["by_ticker_pct"], {"FPT": 5})
+        self.assertEqual(
+            [row["strategy"] for row in recommended["excluded_positions"]], ["Modern Stock EMA"]
+        )
+
+        duplicate_mse = evaluate_portfolio_signal(
+            payload={"strategy": "Modern Stock EMA"},
+            ticker="FPT",
+            exchange="HOSE",
+            action="buy",
+            signals=signals,
+            backtest=backtest,
+            default_allocation_pct=5,
+            sector_map={"FPT": "Công nghệ"},
+        )
+        self.assertFalse(duplicate_mse["allowed"])
+        self.assertEqual(duplicate_mse["reason"], "same_ticker_position_open")
+
+    def test_same_system_confirm_buy_adds_weight_and_confirm_sell_keeps_it(self):
+        # The EMA Daily alerts (Modern Pine) send strategy == base_strategy for DCA top-ups.
+        backtest = {"summary": {"attention_lists": {"ema": {"rows": [{"ticker": "FPT"}]}}}}
+        payload = {"strategy": "Modern Stock EMA Gap Layer", "base_strategy": "Modern Stock EMA Gap Layer"}
         signals = []
         for signal_id, action in enumerate(("buy", "confirm_buy", "confirm_sell"), start=1):
             result = evaluate_portfolio_signal(
@@ -457,7 +567,7 @@ class PortfolioGateTest(unittest.TestCase):
                 signals=signals,
                 backtest=backtest,
                 default_allocation_pct=5,
-                base_strategy=None if action == "buy" else "Modern Stock EMA",
+                base_strategy=None if action == "buy" else "Modern Stock EMA Gap Layer",
                 sector_map={"FPT": "Công nghệ"},
             )
             self.assertTrue(result["allowed"], result.get("reason"))
@@ -465,7 +575,7 @@ class PortfolioGateTest(unittest.TestCase):
                 stored_signal(
                     signal_id=signal_id,
                     ticker="FPT",
-                    strategy="Modern Stock EMA",
+                    strategy="Modern Stock EMA Gap Layer",
                     action=action,
                     classification=result["classification"],
                 )
@@ -487,7 +597,7 @@ class PortfolioGateTest(unittest.TestCase):
             stored_signal(
                 signal_id=4,
                 ticker="FPT",
-                strategy="Modern Stock EMA",
+                strategy="Modern Stock EMA Gap Layer",
                 action="sell",
                 classification=close["classification"],
             )
@@ -616,8 +726,9 @@ class PortfolioGateTest(unittest.TestCase):
                             {
                                 **base,
                                 "action": "confirm_buy",
-                                "strategy": "EMA confirmation",
+                                "strategy": "RF Stock MTF",
                                 "base_strategy": "RF Stock MTF",
+                                "time": "2026-09-02T09:00:00+07:00",
                             }
                         )
                     )
@@ -628,8 +739,9 @@ class PortfolioGateTest(unittest.TestCase):
                             {
                                 **base,
                                 "action": "confirm_buy",
-                                "strategy": "EMA confirmation 2",
+                                "strategy": "RF Stock MTF",
                                 "base_strategy": "RF Stock MTF",
+                                "time": "2026-09-03T09:00:00+07:00",
                             }
                         )
                     )

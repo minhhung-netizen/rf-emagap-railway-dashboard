@@ -744,6 +744,7 @@ async def receive_webhook(
     if (
         action in {"buy", "confirm_buy"}
         and gate["classification"].get("rebalance_managed")
+        and (gate["classification"].get("allocation_pct") or 0) > 0
         and policy["pause_new_allocations"]
     ):
         risk = build_market_risk(store.list_nav_snapshots(), gate["guardrails"], policy)

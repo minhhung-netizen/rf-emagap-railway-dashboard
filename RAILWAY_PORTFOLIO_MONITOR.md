@@ -103,23 +103,31 @@ the dashboard uses `DEFAULT_SIGNAL_WEIGHT_PCT` (5 by default).
 ```
 
 For a confirmation, provide the base position strategy. The base `buy` and its
-`confirm_buy` are two signals of the same rebalance system: an accepted
-`confirm_buy` adds its `allocation_pct` (or `DEFAULT_SIGNAL_WEIGHT_PCT`) to the
-base position previously accepted by the portfolio gate, keeps the base sleeve
-and sector, and is checked against the same caps as a `buy` when the ticker is
-in the rebalance list. `confirm_sell` is recorded without reducing the
-allocation; only `sell` closes the position:
+`confirm_buy` are two signals of the same rebalance system: a `confirm_buy`
+whose `strategy` matches the base position's strategy (case-insensitive) adds
+its `allocation_pct` (or `DEFAULT_SIGNAL_WEIGHT_PCT`) to the base position
+previously accepted by the portfolio gate, keeps the base sleeve and sector,
+and is checked against the same caps as a `buy` when the ticker is in the
+rebalance list. A `confirm_buy` from another system is recorded at 0% with
+`allocation_policy: other_system_confirmation`. `confirm_sell` is recorded
+without reducing the allocation; only `sell` closes the position:
 
 ```json
 {
   "ticker": "HOSE:VPB",
   "action": "confirm_buy",
-  "strategy": "EMA confirmation",
+  "strategy": "RF Stock MTF",
   "base_strategy": "RF Stock MTF",
   "allocation_pct": 5,
   "secret": "<WEBHOOK_SECRET>"
 }
 ```
+
+EMA Daily alerts use `Modern Stock EMA Gap Layer` as both `strategy` and
+`base_strategy`. The Pine default `Modern Stock EMA` (shown as MSE) is
+tracking-only: its positions are accepted and listed as tracked positions but
+never count toward the rebalance gate or caps, and they do not block RF/EMA
+Daily buys on the same ticker.
 
 New allocations in the matching rebalance list are rejected when they would
 exceed the latest snapshot's total-exposure, ticker, sector, RF-sleeve, or
