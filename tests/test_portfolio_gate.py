@@ -134,6 +134,35 @@ class PortfolioGateTest(unittest.TestCase):
                 "an alert with no usable fields",
             )
 
+    def test_webhook_secret_is_accepted_from_query_or_body_and_wrong_secret_is_refused(self):
+        payload = {"ticker": "HOSE:FPT", "action": "setup_bull", "strategy": "Inertial RSI",
+                   "timeframe": "D", "price": 100000}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = SignalStore(Path(temp_dir) / "signals.db")
+            settings = replace(dashboard_main.settings, webhook_secret="gate-test-secret")
+            with patch.object(dashboard_main, "store", store), patch.object(
+                dashboard_main, "settings", settings
+            ), patch.object(dashboard_main, "enqueue_signal_enrichment"):
+                from_query = asyncio.run(dashboard_main.receive_webhook(
+                    webhook_request({**payload, "time": "2026-09-01T09:00:00+07:00"}),
+                    secret="gate-test-secret",
+                ))
+                from_body = asyncio.run(dashboard_main.receive_webhook(
+                    webhook_request({**payload, "time": "2026-09-02T09:00:00+07:00",
+                                     "secret": "gate-test-secret"}),
+                    secret=None,
+                ))
+                for wrong in ({"secret": "wrong"}, {}):
+                    with self.assertRaises(dashboard_main.HTTPException) as refused:
+                        asyncio.run(dashboard_main.receive_webhook(
+                            webhook_request({**payload, **wrong}), secret=None,
+                        ))
+                    self.assertEqual(refused.exception.status_code, 401)
+
+            self.assertEqual(from_query["status"], "accepted")
+            self.assertEqual(from_body["status"], "accepted")
+            self.assertEqual(len(store.list_all_signals()), 2)
+
     def test_plaintext_order_fill_reaches_portfolio_gate(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             store = SignalStore(Path(temp_dir) / "signals.db")

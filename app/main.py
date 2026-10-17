@@ -642,7 +642,10 @@ async def receive_webhook(
             reason=webhook_parse_error_reason(exc),
             detail=exc.detail,
         )
-    if settings.webhook_secret and settings.webhook_secret not in {secret, payload.secret}:
+    if settings.webhook_secret and not (
+        secret_matches(secret, settings.webhook_secret)
+        or secret_matches(payload.secret, settings.webhook_secret)
+    ):
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
     if is_derivative_payload(payload):

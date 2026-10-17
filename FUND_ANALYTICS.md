@@ -80,8 +80,10 @@ Ví dụ NAV 100 triệu, nắm 200 MBB ở giá 25.000 VND và tiền mặt 95 
 - CAGR là TWR năm hóa, chỉ hiện từ 365 ngày. Drawdown và thời gian phục hồi
   dựa trên đường TWR; thời gian tính ngày lịch, gồm cả kỳ chưa phục hồi.
 - Sharpe, Sortino, biến động năm hóa dùng 252 phiên và tối thiểu 20 khoảng
-  lợi nhuận. Lịch kiểm tra là thứ Hai–thứ Sáu, chưa có lịch nghỉ lễ sở giao dịch.
-  Thiếu phiên/ngày nghỉ lễ làm ẩn chỉ số năm hóa theo phiên để tránh lấp số 0.
+  lợi nhuận. Lịch kiểm tra là thứ Hai–thứ Sáu trừ ngày nghỉ HOSE đã khai báo
+  trong `app/data/hose_holidays.json` (hiện đến hết 2026). Thiếu NAV ở một phiên
+  giao dịch, hoặc nghỉ lễ thuộc năm chưa khai báo, làm ẩn chỉ số năm hóa theo
+  phiên để tránh lấp số 0.
   Sharpe dùng độ lệch chuẩn mẫu của lợi nhuận vượt lãi suất phi rủi ro;
   Sortino dùng căn trung bình bình phương phần âm của lợi nhuận vượt mức này.
 - Bảng tháng/năm có thể chứa kỳ chưa trọn. Khoảng giữa hai NAV được gán cho

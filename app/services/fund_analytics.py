@@ -6,13 +6,15 @@ Missing observations never become zero returns or fabricated cash balances.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from math import exp, isfinite, log, sqrt
 from statistics import mean, stdev
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.services.market_hours import HOLIDAYS_COVERED_THROUGH, trading_days_between
 
 
 class AnalyticsModel(BaseModel):
@@ -129,8 +131,11 @@ def xirr(flows: list[tuple[date, float]]) -> float | None:
 
 
 def _business_gap(start: date, end: date) -> int:
-    """Weekdays only; exchange holidays are conservatively flagged for review."""
-    return sum((start + timedelta(days=i)).weekday() < 5 for i in range(1, (end-start).days + 1))
+    """Trading days between NAV dates; declared HOSE holidays are not missing sessions.
+
+    Holidays in years the calendar does not cover still count, so those gaps stay flagged.
+    """
+    return trading_days_between(start, end)
 
 
 def _growth_index(log_growth: float) -> float | None:
@@ -199,7 +204,8 @@ def build_fund_performance(snapshots: list[dict], policy: dict | None = None) ->
                       "benchmark_index": snapshot["benchmark_value"]/ordered[0]["benchmark_value"]*100 if benchmark_ok else None})
     flows.append((end, ordered[-1]["nav"]))
     if not regular:
-        warnings.append("NAV không đủ chuỗi phiên ngày (lịch thứ Hai–thứ Sáu). Ẩn Sharpe/Sortino; bảng tháng/năm phân bổ theo ngày ghi nhận cuối kỳ, cần kiểm tra ngày thiếu/nghỉ lễ và dòng tiền.")
+        covered = HOLIDAYS_COVERED_THROUGH.strftime("%d/%m/%Y") if HOLIDAYS_COVERED_THROUGH else "chưa khai báo"
+        warnings.append(f"NAV không đủ chuỗi phiên giao dịch (thứ Hai–thứ Sáu trừ ngày nghỉ HOSE đã khai báo đến {covered}). Ẩn Sharpe/Sortino; bảng tháng/năm phân bổ theo ngày ghi nhận cuối kỳ, cần kiểm tra ngày thiếu/nghỉ lễ và dòng tiền.")
     if ordered[0]["external_flow"]:
         warnings.append("NAV đầu tiên là mốc vốn đầu kỳ; dòng tiền tại mốc đầu không được tính lần nữa.")
     days = (end-start).days

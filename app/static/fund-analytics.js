@@ -16,7 +16,8 @@
   const table = (headers, rows) => `<div class="tableWrap"><table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length ? rows.map(row=>`<tr>${row.map(cell=>`<td>${esc(cell)}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${headers.length}" class="fundEmpty">Chưa đủ dữ liệu</td></tr>`}</tbody></table></div>`;
   async function request(url, options={}) {
     const response = await fetch(url, options);
-    const body = await response.json();
+    // Error pages from a proxy may not be JSON; report the HTTP status instead of a parse error.
+    const body = await response.json().catch(error => {if (response.ok) throw error;return {};});
     if (!response.ok) {
       const detail = Array.isArray(body.detail) ? body.detail.map(e=>`${e.loc.join('.')}: ${e.msg}`).join('; ') : body.detail;
       throw new Error(detail || `HTTP ${response.status}`);

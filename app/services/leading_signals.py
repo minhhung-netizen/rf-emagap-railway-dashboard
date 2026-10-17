@@ -61,9 +61,10 @@ def build_leading_signal_feed(
         next_by_direction[(*scope, direction)] = (detected_at, signal)
         expires_at = detected_at + timedelta(days=_valid_for_days(signal))
         reversed_at = reversal[0] if reversal and reversal[0] < expires_at else None
+        # Only a bullish setup can lead a buy; bearish events never link to one.
         matched_buy = _first_matching_buy(
             signal, gated_buys, detected_at, expires_at, reversed_at=reversed_at
-        )
+        ) if direction == "bull" else None
         gate = _portfolio_gate(matched_buy) if matched_buy else None
         is_active = reference_time < expires_at and reversed_at is None
         status = "reversed" if reversed_at else "active" if is_active else "expired"

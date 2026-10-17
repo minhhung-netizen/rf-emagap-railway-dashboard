@@ -82,6 +82,22 @@ class FundAnalyticsTest(unittest.TestCase):
         rows.pop(5)
         self.assertIsNone(build_fund_performance(rows)['metrics']['sharpe'])
 
+    def test_daily_sharpe_accepts_gaps_on_declared_hose_holidays(self):
+        rows=[]
+        day=date(2026,1,26)
+        nav=100
+        while day<=date(2026,3,6):
+            if day.weekday()<5 and not date(2026,2,16)<=day<=date(2026,2,20):
+                nav*=1.01 if len(rows)%2 else .995
+                rows.append(snapshot(day.isoformat(),nav))
+            day+=timedelta(days=1)
+        result=build_fund_performance(rows)
+        self.assertTrue(result['metrics']['daily_series_complete'])
+        self.assertIsNotNone(result['metrics']['sharpe'])
+        # A missing ordinary trading day is still flagged.
+        missing=[row for row in rows if row['trade_date']!='2026-02-25']
+        self.assertIsNone(build_fund_performance(missing)['metrics']['sharpe'])
+
     def test_validation_blocks_nonfinite_unreconciled_and_duplicate_holdings(self):
         for changes in [{'nav':float('nan')},{'nav':100,'cash':90},{'external_flow':100},
                         {'holdings':[holding(),holding()], 'nav':10000000,'cash':0}]:

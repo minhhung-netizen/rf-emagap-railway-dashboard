@@ -3260,21 +3260,26 @@ async function loadDashboard() {
   if (!user) return;
   els.syncStatus.textContent = t("syncing");
   const performanceQuery = buildPerformanceQuery();
+  const positionsRequest = featureFetch("positions", "/api/performance", {
+    open_trades: [],
+    closed_trades: [],
+    strategies: [],
+    ignored_signals: [],
+  });
+  // Without a ticker/strategy filter both tabs need the same payload; fetch it once.
+  const performanceRequest = !performanceQuery && featureEnabled("positions") && featureEnabled("performance")
+    ? positionsRequest
+    : featureFetch("performance", `/api/performance${performanceQuery}`, {
+      open_trades: [],
+      closed_trades: [],
+      strategies: [],
+    });
   const results = await Promise.allSettled([
     fetchJson("/api/settings"),
     featureFetch("overview", "/api/summary", { total: 0, buy_count: 0, sell_count: 0, tickers: 0 }),
     featureFetch("overview", "/api/signals", { signals: [] }),
-    featureFetch("positions", "/api/performance", {
-      open_trades: [],
-      closed_trades: [],
-      strategies: [],
-      ignored_signals: [],
-    }),
-    featureFetch("performance", `/api/performance${performanceQuery}`, {
-      open_trades: [],
-      closed_trades: [],
-      strategies: [],
-    }),
+    positionsRequest,
+    performanceRequest,
     featureFetch("logs", "/api/invalid-signals", { invalid_signals: [] }),
     featureFetch("portfolioMonitor", "/api/portfolio-backtests/latest", { backtest: null }),
     featureFetch("portfolioMonitor", "/api/portfolio-gate", { guardrails: {}, state: {} }),
@@ -7331,6 +7336,9 @@ els.refreshSectorsButton?.addEventListener("click", refreshSectorsFromProvider);
 els.derivativeCapitalForm.addEventListener("submit", saveDerivativeCapital);
 window.addEventListener("resize", () => {
   resizePriceChart();
+  if (state.activeTab === "performance") {
+    drawEquityCurve(scopedPerformanceClosedTrades());
+  }
   if (state.activeTab === "manualPortfolio") {
     drawManualEquityCurve(state.manualPortfolio.equity_curve || []);
   }

@@ -57,6 +57,27 @@ class LeadingSignalsTest(unittest.TestCase):
         self.assertEqual(result["summary"]["active"], 1)
         self.assertEqual(result["summary"]["matched"], 1)
 
+    def test_bearish_leading_signal_never_matches_a_buy(self):
+        gate = {"portfolio_gate": {"version": 1, "sleeve": "EMA", "sector": "tech", "allocation_pct": 5}}
+        rows = [
+            signal(1, "FPT", "setup_bear", "2026-09-01T09:00:00+07:00"),
+            signal(2, "FPT", "momentum_bear", "2026-09-02T09:00:00+07:00", timeframe="60"),
+            signal(3, "FPT", "buy", "2026-09-05T09:00:00+07:00",
+                   strategy="Modern Stock EMA Gap Layer", payload=gate),
+        ]
+
+        result = build_leading_signal_feed(rows, now=datetime(2026, 9, 10, tzinfo=timezone.utc))
+
+        for event in result["leading_signals"]:
+            self.assertEqual(event["status"], "active")
+            self.assertIsNone(event["matched_signal_id"])
+            self.assertIsNone(event["lead_days"])
+        self.assertEqual(result["summary"]["matched"], 0)
+        performance = {"open_trades": [{"entry_signal_id": 3}], "closed_trades": []}
+        trade = attach_leading_signals(performance, rows)["open_trades"][0]
+        self.assertEqual(trade["leading_signals"], [])
+        self.assertFalse(trade["has_leading_bull"])
+
     def test_position_signals_do_not_end_or_extend_a_leading_signal(self):
         rows = [signal(1, "SSI", "setup_bull", "2026-09-01T09:00:00+07:00")]
         for signal_id, action in enumerate(("buy", "confirm_buy", "sell"), start=2):

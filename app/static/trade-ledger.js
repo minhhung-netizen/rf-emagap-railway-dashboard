@@ -9,7 +9,7 @@
   const table = (headers,rows) => `<div class="tableWrap"><table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.length?rows.map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${headers.length}">Chưa có dữ liệu</td></tr>`}</tbody></table></div>`;
   async function api(path='',data) {
     const r = await fetch('/api/admin/ledger'+path,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-    const body = await r.json();
+    const body = await r.json().catch(error => {if(r.ok) throw error;return {};});
     if(!r.ok) throw new Error(Array.isArray(body.detail)?body.detail.map(e=>`${e.loc.join('.')}: ${e.msg}`).join('; '):body.detail || `HTTP ${r.status}`);
     return body;
   }
