@@ -182,6 +182,18 @@ class VnstockRateLimiter:
             self._sleeper(wait_seconds)
 
 
+def vnstock_installed() -> bool:
+    """True when the optional vnstock package can be imported."""
+    if "vnstock" in sys.modules:
+        return True
+    try:
+        from importlib.util import find_spec
+
+        return find_spec("vnstock") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 class VnstockEnricher:
     """Small adapter around vnstock with graceful fallback when APIs differ."""
 
@@ -225,6 +237,11 @@ class VnstockEnricher:
         return deepcopy(enrichment)
 
     def _enrich_with_vnstock(self, ticker: str) -> dict[str, Any]:
+        if not vnstock_installed():
+            # vnstock < 6 stopped working on 2026-11-10 and is no longer on
+            # PyPI, so it is not installed by default. Fail fast instead of
+            # touching HOME/stdout or waiting on the rate limiter.
+            raise RuntimeError("vnstock is not installed")
         vnstock_home = PROJECT_ROOT / "data" / "vnstock-home"
         vnstock_home.mkdir(parents=True, exist_ok=True)
         os.environ["HOME"] = str(vnstock_home)
