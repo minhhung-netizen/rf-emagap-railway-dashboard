@@ -350,3 +350,16 @@ class EnrichmentHelpersTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VnstockMissingTest(unittest.TestCase):
+    def test_enrich_reports_unavailable_without_vnstock(self):
+        from unittest import mock
+
+        from app.services import enrichment as mod
+
+        with mock.patch.object(mod, "vnstock_installed", return_value=False):
+            result = mod.VnstockEnricher(min_request_interval_seconds=0).enrich("VPB")
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["history"], [])
+        self.assertIn("not installed", result["message"])
