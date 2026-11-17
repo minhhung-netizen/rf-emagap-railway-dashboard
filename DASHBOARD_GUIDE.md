@@ -90,15 +90,13 @@ Ví dụ trên dành cho lần chỉ sửa hướng dẫn. Khi sửa chức năn
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | `admin`, `change-me` | Tài khoản admin ban đầu; đổi trước khi public |
 | `PRICE_REFRESH_MINUTES` | `120` | Chu kỳ làm mới giá trong giờ thị trường |
 | `MARKET_SESSIONS` | `09:00-11:30,13:00-15:00` | Phiên theo giờ Việt Nam |
-| `VNSTOCK_MAX_REQUESTS_PER_MINUTE` | `19` | Giới hạn cứng tối đa 19 yêu cầu/phút |
-| `VNSTOCK_MIN_REQUEST_INTERVAL_SECONDS` | `4` | Khoảng cách tối thiểu giữa các yêu cầu |
-| `VNSTOCK_CACHE_TTL_MINUTES` | `240` | Cache theo mã |
-| `VNSTOCK_LOOKBACK_DAYS` | `90` | Độ dài lịch sử giá |
-| `VNSTOCK_INCLUDE_METRICS` | `false` | Chỉ số cơ bản bổ sung |
+| `MARKET_DATA_MIN_REQUEST_INTERVAL_SECONDS` | `4` | Khoảng cách tối thiểu giữa các yêu cầu DNSE |
+| `MARKET_DATA_CACHE_TTL_MINUTES` | `240` | Cache theo mã (DNSE) |
+| `MARKET_DATA_LOOKBACK_DAYS` | `90` | Độ dài lịch sử giá (DNSE, FireAnt) |
 | `DUPLICATE_WINDOW_MINUTES` | `5` | Cửa sổ phát hiện trùng khi thiếu `time` |
 | `DEFAULT_SIGNAL_WEIGHT_PCT` | `5` | Tỷ trọng mặc định khi thiếu `allocation_pct` |
 
-VNStock là nguồn giá ưu tiên; nếu không có lịch sử hợp lệ, ứng dụng thử FireAnt rồi DNSE khi đã cấu hình `FIREANT_ACCESS_TOKEN`, `DNSE_API_KEY`, `DNSE_API_SECRET`. Các yêu cầu VNStock về giá, ngành và cổ tức dùng chung bộ giới hạn trong một tiến trình. Giá có thể cũ ngoài giờ thị trường, khi cache còn hiệu lực hoặc nhà cung cấp lỗi; kiểm tra nguồn và thời điểm cập nhật trước khi dùng.
+Ứng dụng lấy giá từ FireAnt (khi có `FIREANT_ACCESS_TOKEN`) rồi DNSE (khi có `DNSE_API_KEY`, `DNSE_API_SECRET`). Nếu không cấu hình nhà cung cấp nào hoặc tất cả đều lỗi, giá được báo là không khả dụng. Nếu chưa đặt tên biến `MARKET_DATA_*`, ứng dụng vẫn đọc tên biến cũ tương ứng để tương thích. Giá có thể cũ ngoài giờ thị trường, khi cache còn hiệu lực hoặc nhà cung cấp lỗi; kiểm tra nguồn và thời điểm cập nhật trước khi dùng.
 
 **Lịch nghỉ HOSE:** `app/data/hose_holidays.json` liệt kê các ngày thường HOSE nghỉ giao dịch (hiện có 2024–2026, `covered_through` là 31/12/2026). Vòng làm mới giá không chạy vào các ngày này, và Hiệu suất NAV không coi chúng là ngày thiếu NAV. Khi HOSE công bố lịch năm mới (thường vào tháng 12), thêm các ngày nghỉ rơi vào thứ Hai–thứ Sáu, kể cả ngày nghỉ hoán đổi, rồi cập nhật `covered_through` và deploy lại. Năm chưa khai báo vẫn tính mọi ngày thường là phiên giao dịch.
 
@@ -274,14 +272,14 @@ Module này lưu thống kê riêng, không tự tạo bút toán Sổ giao dị
 
 **Người dùng:** admin tạo tài khoản, cấp vai trò `admin`/`user`, chọn tab và chiến lược được xem, đổi mật khẩu, vô hiệu hóa tài khoản. `user` chỉ xem. Báo cáo NAV toàn danh mục không cấp cho tài khoản bị giới hạn chiến lược.
 
-**Nhóm ngành:** cập nhật ngành thủ công hoặc tự điền từ VNStock. Ánh xạ thủ công được ưu tiên. Kiểm tra ngành trước khi nhận mã mới vì Gate dùng ngành cho trần của mã trong danh sách.
+**Nhóm ngành:** cập nhật ngành thủ công; dữ liệu ngành mặc định lấy từ `app/data/vn_sectors.json`. Ánh xạ thủ công được ưu tiên. Kiểm tra ngành trước khi nhận mã mới vì Gate dùng ngành cho trần của mã trong danh sách.
 
 ## 10. Kiểm tra sau phiên và xử lý lỗi
 
 1. Kiểm tra **Tổng quan**, **Vị thế**, giá và tín hiệu đóng/mở.
 2. Kiểm tra ngày snapshot cùng danh sách RF/EMA trong **RF + EMA Monitor**; nếu cũ, công bố lại từ dự án backtest.
 3. Nếu TradingView gửi alert nhưng không có vị thế, xem **Nhật ký** và đối chiếu `ticker`, `time`, `strategy`, `base_strategy`, sleeve, ngành, lý do `duplicate_webhook`, `sector_not_mapped`, `ticker_cap`, `nav_risk_pause`...
-4. Nếu giá cũ, kiểm tra nguồn, giờ giao dịch, cache và dùng nút cập nhật giá. VNStock được giới hạn dưới 20 yêu cầu/phút nên đồng bộ nhiều mã cần thời gian.
+4. Nếu giá cũ, kiểm tra nguồn, giờ giao dịch, cache và dùng nút cập nhật giá. Các nhà cung cấp có giãn cách giữa các yêu cầu nên đồng bộ nhiều mã cần thời gian.
 5. Nếu Railway chưa cập nhật, xem commit trên `main` của repository triển khai (`git remote -v`), build/deploy log, biến môi trường, Volume và `/health`. Sao lưu DB trước khi đổi đường dẫn lưu trữ.
 
 `/api/portfolio-gate` trả `state` của mọi vị thế Gate và `rebalance_recommended` của nhóm được quản lý; `/api/portfolio-backtests/latest` trả snapshot mới nhất; `/api/invalid-signals` trả log từ chối. API dashboard cần session đăng nhập. Webhook và importer dùng token riêng; không đưa token importer vào TradingView. `401` thường là thiếu/sai xác thực, `403` là thiếu quyền, `410` là API đã ngừng dùng.

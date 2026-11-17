@@ -261,8 +261,6 @@ const els = {
   sectorNameOptions: document.querySelector("#sectorNameOptions"),
   sectorSearch: document.querySelector("#sectorSearch"),
   sectorTable: document.querySelector("#sectorTable"),
-  refreshSectorsButton: document.querySelector("#refreshSectorsButton"),
-  sectorRefreshStatus: document.querySelector("#sectorRefreshStatus"),
 };
 
 const FALLBACK_SIGNAL_WEIGHT_PCT = 5;
@@ -3394,7 +3392,7 @@ async function loadDashboard() {
   await window.TradeReconciliation?.refresh(state.user);
   if (state.user !== user) return;
   state.lastRefreshAt = new Date();
-  els.syncStatus.textContent = state.marketDataProvider === "unavailable"
+  els.syncStatus.textContent = ["unavailable", "none"].includes(state.marketDataProvider)
     ? t("marketDataUnavailable")
     : t("syncedJustNow");
 
@@ -6619,23 +6617,6 @@ async function deleteSectorMapping(ticker) {
   await refresh();
 }
 
-async function refreshSectorsFromProvider() {
-  if (!els.refreshSectorsButton) return;
-  els.refreshSectorsButton.disabled = true;
-  els.sectorRefreshStatus.textContent = "Đang lấy dữ liệu…";
-  try {
-    const response = await fetch("/api/sectors/refresh", { method: "POST" });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.detail || "Không thể tự điền ngành");
-    els.sectorRefreshStatus.textContent = `Nguồn ${result.fetched || 0} mã · thêm ${result.added || 0} · cập nhật ${result.updated || 0}`;
-    await refresh();
-  } catch (error) {
-    els.sectorRefreshStatus.textContent = error.message || "Cập nhật thất bại";
-  } finally {
-    els.refreshSectorsButton.disabled = false;
-  }
-}
-
 async function loadChartPayload(ticker) {
   const payload = await fetchJson(`/api/chart/${encodeURIComponent(ticker)}`);
   const history = normalizeHistory(payload.history || []);
@@ -7332,7 +7313,6 @@ els.dividendEventForm.addEventListener("submit", addDividendEvent);
 els.refreshDividendsButton?.addEventListener("click", refreshDividendsFromProviders);
 els.sectorForm?.addEventListener("submit", saveSectorMapping);
 els.sectorSearch?.addEventListener("input", renderSectorMappings);
-els.refreshSectorsButton?.addEventListener("click", refreshSectorsFromProvider);
 els.derivativeCapitalForm.addEventListener("submit", saveDerivativeCapital);
 window.addEventListener("resize", () => {
   resizePriceChart();

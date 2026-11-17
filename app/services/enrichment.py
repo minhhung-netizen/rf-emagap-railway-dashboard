@@ -1,45 +1,23 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 import threading
 import time
 import unicodedata
 import base64
 import hashlib
 import hmac
-from collections import deque
 from copy import deepcopy
-from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from datetime import date, datetime, timedelta, timezone
-from importlib import import_module
-from io import StringIO
-from typing import Any, Callable
+from typing import Any
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 from uuid import uuid4
 
-from app.config import PROJECT_ROOT
-
 
 EXCHANGE_PREFIXES = {"HOSE", "HNX", "UPCOM", "VNINDEX", "INDEX"}
 INDEX_TICKERS = {"VNINDEX"}
-_SYMBOL_COLUMN_CANDIDATES = ("symbol", "ticker", "Symbol", "Ticker", "code", "stock_symbol")
-_INDUSTRY_COLUMN_CANDIDATES = (
-    "industry_name",
-    "icb_name2",
-    "icb_name3",
-    "icb_name4",
-    "icb_name1",
-    "icb_name",
-    "industry",
-    "industryName",
-)
-# ICB level 2 is the most useful portfolio-level grouping (e.g. banking,
-# real estate).  Fall back predictably when a provider exposes a different level.
-_ICB_LEVEL_PREFERENCE = (2, 3, 1, 4)
 
 
 def normalize_ticker(raw_ticker: Any) -> tuple[str, str | None]:
@@ -137,216 +115,6 @@ def normalize_action(raw_action: str | None) -> str:
         "confisell": "confirm_sell",
     }
     return aliases.get(action, aliases.get(compact_action, action))
-
-
-class VnstockRateLimiter:
-    """Thread-safe rolling-window limiter shared by every VNStock request."""
-
-    def __init__(
-        self,
-        *,
-        max_requests_per_minute: int = 19,
-        min_request_interval_seconds: float = 4.0,
-        monotonic: Callable[[], float] = time.monotonic,
-        sleeper: Callable[[float], None] = time.sleep,
-    ) -> None:
-        self.max_requests = max(1, min(19, int(max_requests_per_minute)))
-        self.window_seconds = 60.0
-        self.min_interval_seconds = max(0.0, min_request_interval_seconds)
-        self._monotonic = monotonic
-        self._sleeper = sleeper
-        self._timestamps: deque[float] = deque()
-        self._lock = threading.Lock()
-
-    def wait(self) -> None:
-        while True:
-            with self._lock:
-                now = self._monotonic()
-                while self._timestamps and now - self._timestamps[0] >= self.window_seconds:
-                    self._timestamps.popleft()
-
-                interval_wait = 0.0
-                if self._timestamps:
-                    interval_wait = self.min_interval_seconds - (
-                        now - self._timestamps[-1]
-                    )
-                window_wait = 0.0
-                if len(self._timestamps) >= self.max_requests:
-                    window_wait = self.window_seconds - (
-                        now - self._timestamps[0]
-                    )
-                wait_seconds = max(interval_wait, window_wait, 0.0)
-                if wait_seconds <= 0:
-                    self._timestamps.append(now)
-                    return
-            self._sleeper(wait_seconds)
-
-
-def vnstock_installed() -> bool:
-    """True when the optional vnstock package can be imported."""
-    if "vnstock" in sys.modules:
-        return True
-    try:
-        from importlib.util import find_spec
-
-        return find_spec("vnstock") is not None
-    except (ImportError, ValueError):
-        return False
-
-
-class VnstockEnricher:
-    """Small adapter around vnstock with graceful fallback when APIs differ."""
-
-    def __init__(
-        self,
-        lookback_days: int = 90,
-        *,
-        cache_ttl_seconds: int = 240 * 60,
-        min_request_interval_seconds: float = 4.0,
-        max_requests_per_minute: int = 19,
-        include_metrics: bool = False,
-        rate_limiter: VnstockRateLimiter | None = None,
-    ) -> None:
-        self.lookback_days = lookback_days
-        self.cache_ttl_seconds = cache_ttl_seconds
-        self.min_request_interval_seconds = min_request_interval_seconds
-        self.include_metrics = include_metrics
-        self._cache: dict[str, tuple[float, dict[str, Any]]] = {}
-        self._lock = threading.Lock()
-        self.rate_limiter = rate_limiter or VnstockRateLimiter(
-            max_requests_per_minute=max_requests_per_minute,
-            min_request_interval_seconds=min_request_interval_seconds,
-        )
-
-    def enrich(self, ticker: str, *, force: bool = False) -> dict[str, Any]:
-        if not force:
-            cached = self._get_cached(ticker)
-            if cached is not None:
-                return cached
-        try:
-            enrichment = self._enrich_with_vnstock(ticker)
-        except BaseException as exc:  # vnstock may raise non-Exception exits internally.
-            enrichment = {
-                "status": "unavailable",
-                "message": str(exc),
-                "ticker": ticker,
-                "history": [],
-                "metrics": {},
-            }
-        self._set_cached(ticker, enrichment)
-        return deepcopy(enrichment)
-
-    def _enrich_with_vnstock(self, ticker: str) -> dict[str, Any]:
-        if not vnstock_installed():
-            # vnstock < 6 stopped working on 2026-11-10 and is no longer on
-            # PyPI, so it is not installed by default. Fail fast instead of
-            # touching HOME/stdout or waiting on the rate limiter.
-            raise RuntimeError("vnstock is not installed")
-        vnstock_home = PROJECT_ROOT / "data" / "vnstock-home"
-        vnstock_home.mkdir(parents=True, exist_ok=True)
-        os.environ["HOME"] = str(vnstock_home)
-        os.environ["USERPROFILE"] = str(vnstock_home)
-        for stream in (sys.stdout, sys.stderr):
-            if hasattr(stream, "reconfigure"):
-                stream.reconfigure(encoding="utf-8", errors="replace")
-
-        with quiet_output():
-            module = __import__("vnstock")
-            end = date.today()
-            start = end - timedelta(days=self.lookback_days)
-            history = self._get_history(module, ticker, start.isoformat(), end.isoformat())
-            metrics = {}
-            if self.include_metrics:
-                metrics = self._get_metrics(module, ticker)
-
-        return {
-            "status": "ok",
-            "ticker": ticker,
-            "history": history[-80:],
-            "metrics": metrics,
-        }
-
-    def _get_cached(self, ticker: str) -> dict[str, Any] | None:
-        now = time.monotonic()
-        with self._lock:
-            cached = self._cache.get(ticker)
-            if not cached:
-                return None
-            cached_at, enrichment = cached
-            if now - cached_at > self.cache_ttl_seconds:
-                self._cache.pop(ticker, None)
-                return None
-            return deepcopy(enrichment)
-
-    def _set_cached(self, ticker: str, enrichment: dict[str, Any]) -> None:
-        with self._lock:
-            self._cache[ticker] = (time.monotonic(), deepcopy(enrichment))
-
-    def _wait_for_rate_limit(self) -> None:
-        self.rate_limiter.wait()
-
-    def _get_history(
-        self, module: Any, ticker: str, start: str, end: str
-    ) -> list[dict[str, Any]]:
-        try:
-            quote_module = import_module("vnstock.api.quote")
-            quote_class = getattr(quote_module, "Quote")
-            for source in ("VCI", "KBS"):
-                try:
-                    quote = quote_class(symbol=ticker, source=source, show_log=False)
-                    self._wait_for_rate_limit()
-                    data = quote.history(start=start, end=end, interval="1D")
-                    records = _records_from_dataframe_like(data)
-                    if records:
-                        return records
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-        if hasattr(module, "stock_historical_data"):
-            self._wait_for_rate_limit()
-            data = module.stock_historical_data(
-                symbol=ticker,
-                start_date=start,
-                end_date=end,
-                resolution="1D",
-                type="stock",
-            )
-            return _records_from_dataframe_like(data)
-
-        if hasattr(module, "Vnstock"):
-            stock = module.Vnstock().stock(symbol=ticker, source="VCI")
-            self._wait_for_rate_limit()
-            data = stock.quote.history(start=start, end=end, interval="1D")
-            return _records_from_dataframe_like(data)
-
-        raise RuntimeError("No supported vnstock history API was found")
-
-    def _get_metrics(self, module: Any, ticker: str) -> dict[str, Any]:
-        try:
-            finance_module = import_module("vnstock.api.financial")
-            finance_class = getattr(finance_module, "Finance")
-            finance = finance_class(symbol=ticker, source="VCI", period="year", show_log=False)
-            self._wait_for_rate_limit()
-            ratio = finance.ratio(period="year", lang="en", dropna=True)
-            records = _records_from_dataframe_like(ratio)
-            return records[-1] if records else {}
-        except BaseException:
-            pass
-
-        try:
-            if hasattr(module, "stock_intraday_data"):
-                return {}
-            if hasattr(module, "Vnstock"):
-                stock = module.Vnstock().stock(symbol=ticker, source="VCI")
-                self._wait_for_rate_limit()
-                ratio = stock.finance.ratio(period="year", lang="en", dropna=True)
-                records = _records_from_dataframe_like(ratio)
-                return records[-1] if records else {}
-        except BaseException:
-            return {}
-        return {}
 
 
 class FireAntEnricher:
@@ -587,34 +355,18 @@ class DnseEnricher:
 
 
 class MarketDataEnricher:
-    """Select a primary market source and preserve provider fallbacks."""
+    """Use FireAnt first (when configured), then DNSE; report unavailable otherwise."""
 
     def __init__(
         self,
         *,
         fireant: FireAntEnricher | None = None,
-        dnse: DnseEnricher | None,
-        vnstock: VnstockEnricher,
-        prefer_vnstock: bool = False,
+        dnse: DnseEnricher | None = None,
     ) -> None:
         self.fireant = fireant
         self.dnse = dnse
-        self.vnstock = vnstock
-        self.prefer_vnstock = prefer_vnstock
 
     def enrich(self, ticker: str, *, force: bool = False) -> dict[str, Any]:
-        if self.prefer_vnstock:
-            primary = self.vnstock.enrich(ticker, force=force)
-            primary.setdefault("source", "vnstock")
-            if primary.get("status") == "ok" and primary.get("history"):
-                return primary
-            fallback = self._enrich_without_vnstock(ticker, force=force)
-            if fallback is not None:
-                fallback["fallback_from"] = "vnstock"
-                fallback["vnstock_message"] = primary.get("message")
-                return fallback
-            return primary
-
         fireant_message = None
         if self.fireant is not None:
             primary = self.fireant.enrich(ticker, force=force)
@@ -631,41 +383,32 @@ class MarketDataEnricher:
                 return primary
             fireant_message = primary.get("message")
 
+        dnse_message = None
         if self.dnse is not None:
             primary = self.dnse.enrich(ticker, force=force)
             if primary.get("status") == "ok" and primary.get("history"):
                 if fireant_message:
                     primary["fireant_message"] = fireant_message
                 return primary
-            fallback = self.vnstock.enrich(ticker, force=force)
-            fallback["fallback_from"] = "fireant,dnse" if fireant_message else "dnse"
-            fallback["fireant_message"] = fireant_message
-            fallback["dnse_message"] = primary.get("message")
-            fallback.setdefault("source", "vnstock")
-            return fallback
-        result = self.vnstock.enrich(ticker, force=force)
-        if fireant_message:
-            result["fallback_from"] = "fireant"
-            result["fireant_message"] = fireant_message
-        result.setdefault("source", "vnstock")
-        return result
+            dnse_message = primary.get("message")
 
-    def _enrich_without_vnstock(
-        self, ticker: str, *, force: bool
-    ) -> dict[str, Any] | None:
-        fireant_message = None
-        if self.fireant is not None:
-            result = self.fireant.enrich(ticker, force=force)
-            if result.get("status") == "ok" and result.get("history"):
-                return result
-            fireant_message = result.get("message")
-        if self.dnse is not None:
-            result = self.dnse.enrich(ticker, force=force)
-            if fireant_message:
-                result["fireant_message"] = fireant_message
-            if result.get("status") == "ok" and result.get("history"):
-                return result
-        return None
+        if self.fireant is None and self.dnse is None:
+            message = "No market-data provider configured (set DNSE or FireAnt keys)"
+        else:
+            message = "All configured market-data providers failed"
+        result: dict[str, Any] = {
+            "status": "unavailable",
+            "source": "none",
+            "ticker": ticker,
+            "history": [],
+            "metrics": {},
+            "message": message,
+        }
+        if fireant_message:
+            result["fireant_message"] = fireant_message
+        if dnse_message:
+            result["dnse_message"] = dnse_message
+        return result
 
 
 class FireAntRestClient:
@@ -981,175 +724,3 @@ def _find_number(payload: Any, keys: tuple[str, ...]) -> float | None:
             if found is not None:
                 return found
     return None
-
-
-@contextmanager
-def quiet_output() -> Any:
-    sink = StringIO()
-    with redirect_stdout(sink), redirect_stderr(sink):
-        yield
-
-
-def _records_from_dataframe_like(value: Any) -> list[dict[str, Any]]:
-    if value is None:
-        return []
-    if hasattr(value, "to_dict"):
-        records = value.to_dict(orient="records")
-    elif isinstance(value, list):
-        records = value
-    else:
-        return []
-    return [_json_ready(row) for row in records]
-
-
-def fetch_industry_map(
-    *, rate_limiter: VnstockRateLimiter | None = None
-) -> dict[str, str]:
-    """Best-effort ticker-to-industry map from vnstock's listing API."""
-    listing = _resolve_vnstock_listing()
-    if listing is None:
-        return {}
-    for method_name in ("symbols_by_industries", "industries_icb"):
-        method = getattr(listing, method_name, None)
-        if method is None:
-            continue
-        try:
-            if rate_limiter is not None:
-                rate_limiter.wait()
-            mapping = _industry_map_from_records(_records_from_dataframe_like(method()))
-        except BaseException:
-            continue
-        if mapping:
-            return mapping
-    return {}
-
-
-def _resolve_vnstock_listing() -> Any:
-    try:
-        listing_module = import_module("vnstock.api.listing")
-        listing_class = getattr(listing_module, "Listing", None)
-        if listing_class is not None:
-            try:
-                return listing_class(source="VCI")
-            except BaseException:
-                return listing_class()
-    except BaseException:
-        pass
-    try:
-        module = import_module("vnstock")
-        listing_class = getattr(module, "Listing", None)
-        if listing_class is not None:
-            try:
-                return listing_class(source="VCI")
-            except BaseException:
-                return listing_class()
-        if hasattr(module, "Vnstock"):
-            return module.Vnstock().stock(symbol="ACB", source="VCI").listing
-    except BaseException:
-        pass
-    return None
-
-
-def _industry_map_from_records(records: list[dict[str, Any]]) -> dict[str, str]:
-    columns = {key for row in records[:100] if isinstance(row, dict) for key in row}
-    symbol_col = _first_present(columns, _SYMBOL_COLUMN_CANDIDATES)
-    industry_col = _first_present(columns, _INDUSTRY_COLUMN_CANDIDATES)
-    if not symbol_col or not industry_col:
-        return {}
-    level_col = "icb_level" if "icb_level" in columns else None
-    levels = {_coerce_level(row.get(level_col)) for row in records} if level_col else set()
-    target_level = next((level for level in _ICB_LEVEL_PREFERENCE if level in levels), None)
-    mapping: dict[str, str] = {}
-    for row in records:
-        if not isinstance(row, dict):
-            continue
-        if target_level is not None and _coerce_level(row.get(level_col)) != target_level:
-            continue
-        symbol = str(row.get(symbol_col) or "").strip().upper()
-        industry = str(row.get(industry_col) or "").strip()
-        if symbol and industry and len(symbol) <= 12:
-            mapping[symbol] = industry
-    return mapping
-
-
-def _first_present(columns: set[str], candidates: tuple[str, ...]) -> str | None:
-    return next((candidate for candidate in candidates if candidate in columns), None)
-
-
-def _coerce_level(value: Any) -> int | None:
-    try:
-        return int(float(str(value).strip()))
-    except (TypeError, ValueError):
-        return None
-
-
-def fetch_dividend_events(
-    ticker: str, *, rate_limiter: VnstockRateLimiter | None = None
-) -> list[dict[str, Any]]:
-    """Fetch announced ex-rights events for one ticker when vnstock supports it."""
-    symbol = str(ticker or "").strip().upper()
-    if not symbol:
-        return []
-    company = _resolve_vnstock_company(symbol)
-    if company is None or not callable(getattr(company, "events", None)):
-        return []
-    try:
-        if rate_limiter is not None:
-            rate_limiter.wait()
-        records = _records_from_dataframe_like(company.events())
-    except BaseException:
-        return []
-    events: list[dict[str, Any]] = []
-    for row in records:
-        if str(row.get("category") or "").strip().upper() != "DIVIDEND":
-            continue
-        ex_date = _iso_date(row.get("exright_date"))
-        if not ex_date:
-            continue
-        title = str(row.get("event_title_vi") or row.get("event_name_vi") or "").strip()
-        folded = _ascii_fold(title)
-        cash = coerce_float(row.get("value_per_share"))
-        ratio = coerce_float(row.get("exercise_ratio"))
-        cash_amount = cash / 1000 if "tien mat" in folded and cash and cash > 0 else None
-        stock_ratio_pct = ratio * 100 if ("co phieu" in folded or "thuong" in folded) and ratio and 0 < ratio < 5 else None
-        event_id = str(row.get("id") or f"{ex_date}:{title}")
-        events.append({
-            "ticker": symbol,
-            "ex_date": ex_date,
-            "cash_amount": cash_amount,
-            "stock_ratio_pct": stock_ratio_pct,
-            "issue_ratio_pct": None,
-            "issue_price": None,
-            "note": f"VNStock: {title}" if title else "VNStock dividend",
-            "source": "vnstock",
-            "external_id": f"{symbol}:{event_id}",
-        })
-    return events
-
-
-def _resolve_vnstock_company(ticker: str) -> Any:
-    for module_name in ("vnstock", "vnstock.api.company"):
-        try:
-            company_class = getattr(import_module(module_name), "Company", None)
-        except BaseException:
-            continue
-        if company_class is None:
-            continue
-        for source in ("VCI", "KBS"):
-            try:
-                return company_class(symbol=ticker, source=source)
-            except BaseException:
-                continue
-    return None
-
-
-def _json_ready(row: dict[str, Any]) -> dict[str, Any]:
-    cleaned: dict[str, Any] = {}
-    for key, value in row.items():
-        if hasattr(value, "isoformat"):
-            cleaned[str(key)] = value.isoformat()
-        elif value != value:
-            cleaned[str(key)] = None
-        else:
-            cleaned[str(key)] = value
-    return cleaned
