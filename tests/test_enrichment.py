@@ -4,8 +4,6 @@ from app.services.enrichment import (
     DnseRestClient,
     FireAntEnricher,
     MarketDataEnricher,
-    VnstockEnricher,
-    VnstockRateLimiter,
     _dnse_ohlc_records,
     _normalize_dnse_stock_history,
     _fireant_dividend_events,
@@ -18,34 +16,6 @@ from app.services.enrichment import (
 
 
 class EnrichmentHelpersTest(unittest.TestCase):
-    def test_vnstock_rate_limiter_stays_below_free_tier_limit(self):
-        clock = [0.0]
-        sleeps = []
-
-        def sleep(seconds):
-            sleeps.append(seconds)
-            clock[0] += seconds
-
-        limiter = VnstockRateLimiter(
-            max_requests_per_minute=3,
-            min_request_interval_seconds=0,
-            monotonic=lambda: clock[0],
-            sleeper=sleep,
-        )
-
-        for _ in range(4):
-            limiter.wait()
-
-        self.assertEqual(sleeps, [60.0])
-
-    def test_vnstock_rate_limiter_caps_configuration_at_nineteen(self):
-        limiter = VnstockRateLimiter(
-            max_requests_per_minute=20,
-            min_request_interval_seconds=0,
-        )
-
-        self.assertEqual(limiter.max_requests, 19)
-
     def test_normalize_ticker_removes_exchange_prefix(self):
         self.assertEqual(normalize_ticker("HOSE:VPB"), ("VPB", "HOSE"))
 
@@ -89,95 +59,6 @@ class EnrichmentHelpersTest(unittest.TestCase):
             1876.75,
         )
         self.assertEqual(normalize_stock_price("1876", exchange="VNINDEX"), 1876)
-
-    def test_enricher_handles_non_exception_vnstock_failures(self):
-        class ExplodingEnricher(VnstockEnricher):
-            def _enrich_with_vnstock(self, ticker):
-                raise SystemExit("vnstock exited")
-
-        result = ExplodingEnricher().enrich("VPB")
-
-        self.assertEqual(result["status"], "unavailable")
-        self.assertEqual(result["ticker"], "VPB")
-        self.assertEqual(result["history"], [])
-        self.assertEqual(result["metrics"], {})
-
-    def test_enricher_caches_by_ticker(self):
-        class CountingEnricher(VnstockEnricher):
-            def __init__(self):
-                super().__init__(cache_ttl_seconds=60, min_request_interval_seconds=0)
-                self.calls = 0
-
-            def _enrich_with_vnstock(self, ticker):
-                self.calls += 1
-                return {
-                    "status": "ok",
-                    "ticker": ticker,
-                    "history": [{"close": 10}],
-                    "metrics": {},
-                }
-
-        enricher = CountingEnricher()
-
-        first = enricher.enrich("VPB")
-        second = enricher.enrich("VPB")
-        first["history"][0]["close"] = 99
-
-        self.assertEqual(enricher.calls, 1)
-        self.assertEqual(second["history"][0]["close"], 10)
-
-    def test_enricher_force_bypasses_cache(self):
-        class CountingEnricher(VnstockEnricher):
-            def __init__(self):
-                super().__init__(cache_ttl_seconds=60, min_request_interval_seconds=0)
-                self.calls = 0
-
-            def _enrich_with_vnstock(self, ticker):
-                self.calls += 1
-                return {
-                    "status": "ok",
-                    "ticker": ticker,
-                    "history": [{"close": self.calls}],
-                    "metrics": {},
-                }
-
-        enricher = CountingEnricher()
-
-        first = enricher.enrich("VPB")
-        second = enricher.enrich("VPB", force=True)
-
-        self.assertEqual(enricher.calls, 2)
-        self.assertEqual(first["history"][0]["close"], 1)
-        self.assertEqual(second["history"][0]["close"], 2)
-
-    def test_market_data_enricher_prefers_vnstock(self):
-        class Stub:
-            def __init__(self, source):
-                self.source = source
-                self.calls = 0
-
-            def enrich(self, ticker, force=False):
-                self.calls += 1
-                return {
-                    "status": "ok",
-                    "source": self.source,
-                    "history": [{"close": 25}],
-                }
-
-        vnstock = Stub("vnstock")
-        fireant = Stub("fireant")
-        dnse = Stub("dnse")
-        result = MarketDataEnricher(
-            fireant=fireant,
-            dnse=dnse,
-            vnstock=vnstock,
-            prefer_vnstock=True,
-        ).enrich("SSI", force=True)
-
-        self.assertEqual(result["source"], "vnstock")
-        self.assertEqual(vnstock.calls, 1)
-        self.assertEqual(fireant.calls, 0)
-        self.assertEqual(dnse.calls, 0)
 
     def test_dnse_ohlc_records_supports_tradingview_array_shape(self):
         records = _dnse_ohlc_records(
@@ -306,31 +187,39 @@ class EnrichmentHelpersTest(unittest.TestCase):
         result = MarketDataEnricher(
             fireant=FireAntStub(),
             dnse=DnseStub(),
-            vnstock=None,
         ).enrich("FPT")
 
         self.assertEqual(result["source"], "fireant")
         self.assertEqual(result["latest_price_source"], "dnse")
         self.assertEqual(result["history"][-1]["close"], 11)
 
-    def test_market_data_enricher_falls_back_to_vnstock(self):
+    def test_market_data_enricher_without_providers_is_unavailable(self):
+        result = MarketDataEnricher().enrich("VPB")
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["source"], "none")
+        self.assertEqual(result["ticker"], "VPB")
+        self.assertEqual(result["history"], [])
+        self.assertEqual(result["metrics"], {})
+        self.assertIn("No market-data provider", result["message"])
+
+    def test_market_data_enricher_reports_unavailable_when_providers_fail(self):
         class Stub:
-            def __init__(self, result):
-                self.result = result
+            def __init__(self, message):
+                self.message = message
 
             def enrich(self, ticker, force=False):
-                return dict(self.result)
+                return {"status": "unavailable", "message": self.message, "history": []}
 
-        enricher = MarketDataEnricher(
-            dnse=Stub({"status": "unavailable", "message": "DNSE down", "history": []}),
-            vnstock=Stub({"status": "ok", "history": [{"close": 20}], "metrics": {}}),
-        )
+        result = MarketDataEnricher(
+            fireant=Stub("FireAnt down"), dnse=Stub("DNSE down")
+        ).enrich("VPB")
 
-        result = enricher.enrich("VPB")
-
-        self.assertEqual(result["source"], "vnstock")
-        self.assertEqual(result["fallback_from"], "dnse")
-        self.assertEqual(result["history"][-1]["close"], 20)
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["source"], "none")
+        self.assertEqual(result["history"], [])
+        self.assertEqual(result["fireant_message"], "FireAnt down")
+        self.assertEqual(result["dnse_message"], "DNSE down")
 
     def test_dnse_rest_client_builds_signed_headers_without_exposing_secret(self):
         client = DnseRestClient(
@@ -351,15 +240,3 @@ class EnrichmentHelpersTest(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-
-class VnstockMissingTest(unittest.TestCase):
-    def test_enrich_reports_unavailable_without_vnstock(self):
-        from unittest import mock
-
-        from app.services import enrichment as mod
-
-        with mock.patch.object(mod, "vnstock_installed", return_value=False):
-            result = mod.VnstockEnricher(min_request_interval_seconds=0).enrich("VPB")
-        self.assertEqual(result["status"], "unavailable")
-        self.assertEqual(result["history"], [])
-        self.assertIn("not installed", result["message"])

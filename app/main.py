@@ -10,7 +10,6 @@ import sqlite3
 from contextlib import asynccontextmanager
 from datetime import date
 from decimal import Decimal
-from importlib.util import find_spec
 from typing import Any
 from urllib.parse import unquote
 
@@ -27,11 +26,7 @@ from app.services.enrichment import (
     DnseEnricher,
     FireAntEnricher,
     MarketDataEnricher,
-    VnstockEnricher,
-    VnstockRateLimiter,
     coerce_float,
-    fetch_dividend_events,
-    fetch_industry_map,
     normalize_stock_price,
     normalize_action,
     normalize_ticker,
@@ -107,18 +102,6 @@ else:
             else None,
         )
 logger = logging.getLogger(__name__)
-vnstock_rate_limiter = VnstockRateLimiter(
-    max_requests_per_minute=settings.vnstock_max_requests_per_minute,
-    min_request_interval_seconds=settings.vnstock_min_request_interval_seconds,
-)
-vnstock_enricher = VnstockEnricher(
-    lookback_days=settings.vnstock_lookback_days,
-    cache_ttl_seconds=settings.vnstock_cache_ttl_minutes * 60,
-    min_request_interval_seconds=settings.vnstock_min_request_interval_seconds,
-    max_requests_per_minute=settings.vnstock_max_requests_per_minute,
-    include_metrics=settings.vnstock_include_metrics,
-    rate_limiter=vnstock_rate_limiter,
-)
 dnse_enricher = None
 if settings.dnse_api_key and settings.dnse_api_secret:
     try:
@@ -127,19 +110,19 @@ if settings.dnse_api_key and settings.dnse_api_secret:
             api_secret=settings.dnse_api_secret,
             base_url=settings.dnse_base_url,
             api_version=settings.dnse_api_version,
-            lookback_days=settings.vnstock_lookback_days,
-            cache_ttl_seconds=settings.vnstock_cache_ttl_minutes * 60,
-            min_request_interval_seconds=settings.vnstock_min_request_interval_seconds,
+            lookback_days=settings.market_data_lookback_days,
+            cache_ttl_seconds=settings.market_data_cache_ttl_minutes * 60,
+            min_request_interval_seconds=settings.market_data_min_request_interval_seconds,
         )
     except BaseException:
-        logger.exception("Could not initialize DNSE market-data provider; using VNStock")
+        logger.exception("Could not initialize DNSE market-data provider")
 fireant_enricher = None
 if settings.fireant_access_token:
     try:
         fireant_enricher = FireAntEnricher(
             access_token=settings.fireant_access_token,
             base_url=settings.fireant_base_url,
-            lookback_days=settings.vnstock_lookback_days,
+            lookback_days=settings.market_data_lookback_days,
             cache_ttl_seconds=settings.fireant_cache_ttl_minutes * 60,
             min_request_interval_seconds=settings.fireant_min_request_interval_seconds,
         )
@@ -148,8 +131,6 @@ if settings.fireant_access_token:
 enricher = MarketDataEnricher(
     fireant=fireant_enricher,
     dnse=dnse_enricher,
-    vnstock=vnstock_enricher,
-    prefer_vnstock=True,
 )
 last_auto_manual_price_refresh_date: str | None = None
 enrichment_queue: asyncio.Queue[tuple[int, str]] | None = None
@@ -166,7 +147,6 @@ async def lifespan(app: FastAPI):
         # loop intentionally excludes manual positions, so this companion task
         # must remain registered whenever the service starts.
         asyncio.create_task(manual_portfolio_automation_loop()),
-        asyncio.create_task(sector_autofill_loop()),
         asyncio.create_task(dividend_autofetch_loop()),
     ]
     try:
@@ -605,11 +585,12 @@ def dashboard_settings() -> dict[str, Any]:
         "price_refresh_minutes": settings.price_refresh_minutes,
         "market_sessions": settings.market_sessions,
         "market_data_provider": (
-            "vnstock"
-            if find_spec("vnstock") is not None
-            else "unavailable"
+            "fireant"
+            if fireant_enricher is not None
+            else "dnse"
+            if dnse_enricher is not None
+            else "none"
         ),
-        "vnstock_max_requests_per_minute": settings.vnstock_max_requests_per_minute,
     }
 
 
@@ -1782,11 +1763,6 @@ def upsert_sector_mapping(payload: SectorMappingPayload) -> dict[str, Any]:
     return {"status": "saved", "sector": mapping}
 
 
-@app.post("/api/sectors/refresh")
-async def refresh_sectors() -> dict[str, Any]:
-    return {"status": "ok", **(await asyncio.to_thread(populate_sectors_from_listing))}
-
-
 @app.delete("/api/sectors/{ticker}")
 def delete_sector_mapping(ticker: str) -> dict[str, Any]:
     normalized = normalize_ticker(ticker)[0]
@@ -2016,28 +1992,6 @@ async def price_refresh_loop() -> None:
         await asyncio.sleep(interval_seconds)
 
 
-def populate_sectors_from_listing() -> dict[str, Any]:
-    """Refresh provider classifications without overwriting administrator choices."""
-    mapping = fetch_industry_map(rate_limiter=vnstock_rate_limiter)
-    result = store.apply_auto_sector_mappings(mapping) if mapping else {"added": 0, "updated": 0}
-    store.set_app_setting("sectors_refreshed_at", utc_now_iso())
-    store.set_app_setting("sectors_source_count", str(len(mapping)))
-    logger.info("Sector refresh: %s source symbols, %s", len(mapping), result)
-    return {"fetched": len(mapping), **result}
-
-
-async def sector_autofill_loop() -> None:
-    await asyncio.sleep(5)
-    while True:
-        try:
-            await asyncio.to_thread(populate_sectors_from_listing)
-        except asyncio.CancelledError:
-            raise
-        except BaseException:
-            logger.exception("Scheduled sector auto-fill failed")
-        await asyncio.sleep(24 * 3600)
-
-
 async def refresh_dividend_events_for_open_positions() -> dict[str, Any]:
     positions = open_stock_positions_for_dividends()
     tickers = sorted({str(position.get("ticker") or "").upper() for position in positions if position.get("ticker")})
@@ -2057,16 +2011,6 @@ async def refresh_dividend_events_for_open_positions() -> dict[str, Any]:
 
 async def collect_dividend_events_for_ticker(ticker: str) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
-    try:
-        events.extend(
-            await asyncio.to_thread(
-                fetch_dividend_events, ticker, rate_limiter=vnstock_rate_limiter
-            )
-        )
-    except asyncio.CancelledError:
-        raise
-    except BaseException:
-        logger.exception("VNStock dividend fetch failed for %s", ticker)
     try:
         enrichment = await asyncio.to_thread(enricher.enrich, ticker)
     except asyncio.CancelledError:

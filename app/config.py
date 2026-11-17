@@ -16,11 +16,9 @@ class Settings:
     price_refresh_minutes: int = 120
     market_sessions: str = "09:00-11:30,13:00-15:00"
     duplicate_window_minutes: int = 5
-    vnstock_cache_ttl_minutes: int = 240
-    vnstock_min_request_interval_seconds: float = 4.0
-    vnstock_max_requests_per_minute: int = 19
-    vnstock_lookback_days: int = 90
-    vnstock_include_metrics: bool = False
+    market_data_cache_ttl_minutes: int = 240
+    market_data_min_request_interval_seconds: float = 4.0
+    market_data_lookback_days: int = 90
     dnse_api_key: str | None = None
     dnse_api_secret: str | None = None
     dnse_base_url: str = "https://openapi.dnse.com.vn"
@@ -38,6 +36,14 @@ class Settings:
     session_days: int = 30
 
 
+def _env_first(*names: str, default: str) -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value is not None and value.strip():
+            return value
+    return default
+
+
 def _resolve_path(value: str) -> Path:
     path = Path(value)
     if not path.is_absolute():
@@ -53,15 +59,20 @@ def get_settings() -> Settings:
     refresh_minutes = int(os.getenv("PRICE_REFRESH_MINUTES", "120"))
     market_sessions = os.getenv("MARKET_SESSIONS", "09:00-11:30,13:00-15:00")
     duplicate_window_minutes = int(os.getenv("DUPLICATE_WINDOW_MINUTES", "5"))
-    vnstock_cache_ttl_minutes = int(os.getenv("VNSTOCK_CACHE_TTL_MINUTES", "240"))
-    vnstock_min_request_interval_seconds = float(
-        os.getenv("VNSTOCK_MIN_REQUEST_INTERVAL_SECONDS", "4")
+    # Legacy compatibility: fall back to the old VNSTOCK_* names still set on Railway.
+    market_data_cache_ttl_minutes = int(
+        _env_first("MARKET_DATA_CACHE_TTL_MINUTES", "VNSTOCK_CACHE_TTL_MINUTES", default="240")
     )
-    vnstock_max_requests_per_minute = int(
-        os.getenv("VNSTOCK_MAX_REQUESTS_PER_MINUTE", "19")
+    market_data_min_request_interval_seconds = float(
+        _env_first(
+            "MARKET_DATA_MIN_REQUEST_INTERVAL_SECONDS",
+            "VNSTOCK_MIN_REQUEST_INTERVAL_SECONDS",
+            default="4",
+        )
     )
-    vnstock_lookback_days = int(os.getenv("VNSTOCK_LOOKBACK_DAYS", "90"))
-    vnstock_include_metrics = _env_bool("VNSTOCK_INCLUDE_METRICS", default=False)
+    market_data_lookback_days = int(
+        _env_first("MARKET_DATA_LOOKBACK_DAYS", "VNSTOCK_LOOKBACK_DAYS", default="90")
+    )
     dnse_api_key = os.getenv("DNSE_API_KEY") or None
     dnse_api_secret = os.getenv("DNSE_API_SECRET") or None
     dnse_base_url = os.getenv("DNSE_BASE_URL", "https://openapi.dnse.com.vn")
@@ -90,13 +101,11 @@ def get_settings() -> Settings:
         price_refresh_minutes=max(1, refresh_minutes),
         market_sessions=market_sessions,
         duplicate_window_minutes=max(1, duplicate_window_minutes),
-        vnstock_cache_ttl_minutes=max(1, vnstock_cache_ttl_minutes),
-        vnstock_min_request_interval_seconds=max(0.0, vnstock_min_request_interval_seconds),
-        vnstock_max_requests_per_minute=max(
-            1, min(19, vnstock_max_requests_per_minute)
+        market_data_cache_ttl_minutes=max(1, market_data_cache_ttl_minutes),
+        market_data_min_request_interval_seconds=max(
+            0.0, market_data_min_request_interval_seconds
         ),
-        vnstock_lookback_days=max(30, vnstock_lookback_days),
-        vnstock_include_metrics=vnstock_include_metrics,
+        market_data_lookback_days=max(30, market_data_lookback_days),
         dnse_api_key=dnse_api_key,
         dnse_api_secret=dnse_api_secret,
         dnse_base_url=dnse_base_url,
