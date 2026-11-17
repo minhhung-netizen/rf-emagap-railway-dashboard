@@ -56,7 +56,7 @@ node tests/test_dashboard_refresh.js
 
 ## 4. Railway và Git
 
-`railway.json` chạy Uvicorn qua `$PORT`. Tạo service từ repository triển khai `minhhung-netizen/rf-emagap-railway-dashboard`, gắn Railway Volume tại `/data`, dùng một replica khi còn SQLite. Biến tối thiểu:
+Lệnh khởi động đặt trong cài đặt service trên Railway (Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`); Railway ngừng đọc `railway.json` từ 01/12/2026. Tạo service từ repository triển khai `minhhung-netizen/rf-emagap-railway-dashboard`, gắn Railway Volume tại `/data`, dùng một replica khi còn SQLite. Biến tối thiểu:
 
 ```text
 DATABASE_PATH=/data/signals.db
