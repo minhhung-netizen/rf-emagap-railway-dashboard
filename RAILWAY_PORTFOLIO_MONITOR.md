@@ -38,7 +38,7 @@ body.
 
 ## Railway configuration
 
-`railway.json` already starts Uvicorn on Railway's injected `$PORT`. Create a
+The service's Start Command setting on Railway runs `uvicorn app.main:app --host 0.0.0.0 --port $PORT` (railway.json was removed: Railway stops reading Config as Code on 2026-12-01). Create a
 Railway project from this repository/branch, generate a public domain, attach a
 Volume at `/data`, then set these service variables:
 
